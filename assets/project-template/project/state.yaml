@@ -1,0 +1,7 @@
+schema_version: 3
+protocol_version: "3.0"
+project_id: "{{PROJECT_ID}}"
+project_name: "{{PROJECT_NAME}}"
+status: active
+active_task: "{{TASK_ID}}"
+updated: "{{DATE}}"

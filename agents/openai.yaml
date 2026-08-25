@@ -1,0 +1,4 @@
+interface:
+  display_name: "Vibe Project Memory"
+  short_description: "Minimal continuity across humans, agents, and harnesses"
+  default_prompt: "Use $managing-vibe-project-memory to preserve the minimum durable context across project boundaries and activate only the alignment or safety overlays this work needs."
