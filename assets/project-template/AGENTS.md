@@ -114,7 +114,7 @@ hints; they count as resolved only with referenced merge/resolution evidence.
 Do not use project memory to constrain internal agents, graphs, models, tools,
 prompts, or reasoning.
 
-## Claims And Compatibility
+## Claims
 
 Keep implemented, tested, independently verified, human design-approved, human
 completion-accepted, and target-user validated distinct. Bind a formal verdict
@@ -134,6 +134,5 @@ Harness adapters are convenience pointers only. Initialization must stop before
 writes when state/task is incompatible, existing `AGENTS.md` needs manual merge,
 or a planned output is protected.
 
-Validate according to the declared schema and protocol. Legacy v1, v2.1, and
-v2.2 records keep their original meaning and may finish under their adopted
-contract. Migration is explicit and must not rewrite archived authority.
+Validate schema 3 / protocol 3.0 records. If a project declares another version,
+stop and report it as unsupported without rewriting its records.

@@ -92,22 +92,6 @@ Status is descriptive recovery metadata. Protocol 3.0 does not impose one fixed 
 
 Unknown extension fields are allowed and ignored safely unless they contradict a core field or activate a declared overlay.
 
-## Recovery Algorithm
-
-An incoming harness or coordinating agent:
-
-1. Reads `AGENTS.md`.
-2. Reads state and resolves `active_task`.
-3. Reads that task and only its `context_refs` and `decision_refs`.
-4. Reads `handoff_ref` only when the task says `handoff_current: true`.
-5. Inspects current Git status before touching files.
-6. Reads relevant code/tests and selectively follows activated evidence.
-7. States material conflicts or assumptions; otherwise proceeds within the task boundary.
-
-This is orientation, not an exhaustive repository scan. Archived work is loaded only when a current reference or decision depends on it.
-
-Internal subagents receive a delegated capsule in the parent prompt: local goal, boundary, acceptance, relevant files, and hazards. They do not need to reload full project governance. The parent remains responsible for reconciling outputs with task memory.
-
 ## Event-Triggered Artifacts
 
 ### Decisions
@@ -134,9 +118,28 @@ Create durable evidence only when later reproduction, audit, visual comparison, 
 
 - Default/focus mode validates state, recovery-focus task, refs, protected-path consistency, subject freshness, activated overlays, and contradictions between status and results.
 - `--full` validates all managed active/archived records and completion/audit consistency.
-- `--migration` is read-only and dispatches legacy schema/protocol validation without rewriting it.
+
+Both modes require schema 3 / protocol 3.0 for every selected record. Other
+declared versions are rejected without modifying them.
 
 Mechanical validation must not judge aesthetics, prose quality, agent topology, or implementation wisdom. It must not require fixed Markdown headings, minimum prose length, a singleton active task, static builder/verifier inequality, universal readout packages, or a fixed number/format of visual gates.
+
+## Record Templates
+
+Copy a template into the task directory only when its event occurs. These are
+runtime starting points; the initializer deliberately does not copy them.
+
+| Event | Template | Task reference |
+| --- | --- | --- |
+| A durable choice must survive handoff | [Decision](../assets/project-template/optional/decisions.md) | `decision_refs` |
+| Responsibility crosses a boundary with otherwise lost context | [Handoff](../assets/project-template/optional/handoff.md) | `handoff_ref`, `handoff_current` |
+| A formal verdict must be retained | [Review](../assets/project-template/optional/review.md) | `review_ref`, `review_current` |
+| A high-impact action is authorized or attempted | [Action record](../assets/project-template/optional/action-record.md) | `action_refs` |
+
+Replace template placeholders, including `{{TASK_ID}}`, and use project-root-relative
+references. Bind claims to actual subject paths or artifact refs. Templates are
+incomplete until filled with the observed facts; copying one does not establish
+approval or a successful check.
 
 ## Always-Hard Rules
 

@@ -287,7 +287,6 @@ def initialize(
     adapters: tuple[str, ...],
     with_milestones: bool,
     dry_run: bool,
-    force: bool = False,
 ) -> int:
     if not TASK_ID_RE.fullmatch(task_id):
         print(f"ERROR invalid protocol 3.0 task id: {task_id}", file=sys.stderr)
@@ -324,9 +323,6 @@ def initialize(
             f"ERROR unsafe selected project root: ancestor is not a directory: {root_blocker}",
             file=sys.stderr,
         )
-        return 2
-    if force:
-        print("ERROR --force is not supported; protocol 3.0 initialization never overwrites", file=sys.stderr)
         return 2
     for authority_name in ("project", "work"):
         authority_root = project_root / authority_name
@@ -466,11 +462,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Add a thin harness entry pointer; may be repeated.",
     )
     parser.add_argument("--with-milestones", action="store_true")
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Deprecated safety trap: v3 never overwrites existing files.",
-    )
     parser.add_argument("--dry-run", action="store_true", help="Show changes without writing files.")
     return parser
 
@@ -488,7 +479,6 @@ def main() -> int:
         tuple(dict.fromkeys(args.adapter)),
         args.with_milestones,
         args.dry_run,
-        args.force,
     )
 
 
