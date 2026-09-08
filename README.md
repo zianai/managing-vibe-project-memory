@@ -6,7 +6,7 @@
 
 它采用 **最小连续性内核 + 按需启用的对齐规则**。普通本地任务只需要 3 个项目记忆文件；视觉设计、正式评审、外部操作和跨环境协作发生时，再增加对应记录。
 
-本仓库本身只有 **4 个发布文件**，可直接安装，无构建步骤、第三方 Python 依赖或后台服务。当前支持 **schema 3 / protocol 3.0**。
+本仓库提供可直接安装的技能目录，无构建步骤、第三方 Python 依赖或后台服务。当前支持 **schema 3 / protocol 3.0**。设计优先级是完整功能、可靠读取与可维护性，其次才是文件数量。
 
 > 本仓库尚未指定许可证。下文提供使用与贡献说明，但不代表已经授予某种开源许可证下的权利；二次分发和许可事宜请先与维护者确认。
 
@@ -16,7 +16,7 @@
 - [应用场景](#scenarios)：什么时候值得使用
 - [安装与快速开始](#quickstart)：第一次安装、初始化与恢复
 - [命令与模板](#commands)：初始化、检查、模板、按需读取
-- [架构设计](#architecture)：4 个发布文件与项目记忆如何协作
+- [架构设计](#architecture)：技能入口、参考规则、模板与脚本如何协作
 - [协议参考](#protocol-reference)：字段、交接、人类对齐、视觉、外部操作与并行协作
 - [二次开发与贡献](#contributing)：源码导航、验证方式、PR 与 Issue
 - [限制与常见问题](#limitations)
@@ -64,12 +64,30 @@
 
 ### 环境要求
 
-- Python 3.10+；本次发布验证环境为 macOS / Python 3.14。
+- 运行辅助脚本需要 Python 3.10+；已验证环境为 macOS / Python 3.14。直接读取协议和模板不需要 Python。
 - Git：用于下面的安装方式，以及涉及提交、工作区状态和版本绑定的检查。
 - 初始化使用 POSIX 的目录描述符与排他创建操作，适合 macOS、Linux 或 WSL；不承诺原生 Windows 支持。
-- Agent 需要读取本地文件；使用脚本时还需要本地命令执行能力。脚本不需要 API key，不调用模型 API。
+- Agent 需要读取技能与项目文件；实际维护记录还需要写入能力，使用脚本时需要命令执行能力。脚本不需要 API key，不调用模型 API。
 
-### 安装到 Codex
+### 通用使用方式
+
+将整个技能目录放到宿主支持的技能位置；若宿主没有自动技能发现，也可以直接指定本目录的 [SKILL.md](SKILL.md) 作为入口。安装后无需先执行脚本才能读取协议和模板。
+
+```text
+请读取 /absolute/path/to/managing-vibe-project-memory/SKILL.md，
+使用这项技能恢复 /absolute/path/to/my-project 的当前工作。
+```
+
+| 宿主能力 | 可以做什么 | 不能据此声称什么 |
+| --- | --- | --- |
+| 能读取技能 Markdown 与项目文件 | 理解约定、恢复任务、读取规则与模板、提出记录修改 | 不代表已经运行检查器或完成写入 |
+| 另有项目文件写入能力 | 在授权范围内维护任务、决定、交接等记录 | 手工检查不等同于脚本验证 |
+| 另有 Python 与命令执行能力 | 使用初始化、校验及可选的资源输出命令 | 检查通过仍不等于人类授权或业务验收 |
+| 另有 Git | 完成需要 Git 状态、提交及工作区 subject 的验证 | Git 本身不证明身份或外部操作结果 |
+
+这是一项宿主无关的技能，不承诺所有 Agent 都支持同一安装目录、自动触发或命令执行方式。缺少某项能力时明确说明限制，而不是绕过保护或宣称已经验证。
+
+### Codex 安装示例
 
 ```bash
 mkdir -p "$HOME/.agents/skills"
@@ -135,7 +153,17 @@ your-project/
 
 ## 命令与模板
 
-统一入口为 `python3 <skill-dir>/scripts/project_memory.py <command>`。`init` 和 `check` 的项目路径省略时默认是当前工作目录，执行前请确认位置。
+可以直接运行两个职责明确的脚本，也可以使用统一入口；两种方式调用同一份实现，不需要为新旧命令维护两套逻辑：
+
+```bash
+python3 "$MEMORY_SKILL/scripts/init_project_memory.py" "$MEMORY_PROJECT" --dry-run
+python3 "$MEMORY_SKILL/scripts/check_project_memory.py" "$MEMORY_PROJECT" --full
+
+python3 "$MEMORY_SKILL/scripts/project_memory.py" init "$MEMORY_PROJECT" --dry-run
+python3 "$MEMORY_SKILL/scripts/project_memory.py" check "$MEMORY_PROJECT" --full
+```
+
+项目路径省略时默认是当前工作目录，执行前请确认位置。统一入口还提供可选的资源输出命令，但直接阅读下方链接不需要执行 Python。
 
 | 子命令 | 参数 | 行为 |
 | --- | --- | --- |
@@ -146,31 +174,31 @@ your-project/
 | `check [project_root]` | 默认 / `--focus` | 检查项目状态、当前恢复焦点及其引用和声明 |
 | `check [project_root]` | `--full` | 检查所有受管理的活动、归档任务及相关一致性 |
 | `template <name>` | 模板名称见下表 | 原样输出模板到标准输出，不创建文件、不自动授权 |
-| `guide <section>` | 协议章节 ID | 只输出 README 中对应的协议章节 |
+| `guide <section>` | 协议名称 | 只输出对应的独立参考文件 |
 | 任一子命令 | `--help` | 查看当前参数 |
 
 `--focus` 与 `--full` 互斥。返回码：`0` 成功；`1` 项目检查未通过；`2` 参数、初始化或资源读取错误。检查为只读操作；不支持的 schema/protocol 会报错，不会被自动改写。
 
-### 内置模板
+### 可直接读取的模板
 
-模板集中在脚本的 `TEMPLATES` 字典，初始化与模板输出使用同一份内容。
+模板以普通 Markdown/YAML 文件保存；人和 Agent 可直接打开或按实际事件使用。初始化器与 `template` 输出命令读取同一份源文件，不另存字符串副本。
 
 | 名称 | 用途 | 写入项目后由谁引用 |
 | --- | --- | --- |
-| `agents` | 项目根约定 | 项目参与者首先读取 |
-| `state` | 项目状态 | `active_task` 指向当前恢复焦点 |
-| `task` | 任务草稿 | 所在目录与任务 `id` 对应 |
-| `decisions` | 必须保留的决定 | 任务 `decision_refs` |
-| `handoff` | 非重复的交接上下文 | `handoff_ref`、`handoff_current` |
-| `review` | 正式评审结论 | `review_ref`、`review_current` |
-| `action` | 单次逻辑外部效果的执行记录 | 任务 `action_refs` |
+| [`agents`](assets/project-template/AGENTS.md) | 项目根约定 | 项目参与者首先读取 |
+| [`state`](assets/project-template/project/state.yaml) | 项目状态 | `active_task` 指向当前恢复焦点 |
+| [`task`](assets/project-template/templates/task/task.yaml) | 任务草稿 | 所在目录与任务 `id` 对应 |
+| [`decisions`](assets/project-template/optional/decisions.md) | 必须保留的决定 | 任务 `decision_refs` |
+| [`handoff`](assets/project-template/optional/handoff.md) | 非重复的交接上下文 | `handoff_ref`、`handoff_current` |
+| [`review`](assets/project-template/optional/review.md) | 正式评审结论 | `review_ref`、`review_current` |
+| [`action`](assets/project-template/optional/action-record.md) | 单次逻辑外部效果的执行记录 | 任务 `action_refs` |
 
 ```bash
 python3 "$MEMORY_SKILL/scripts/project_memory.py" template handoff
 python3 "$MEMORY_SKILL/scripts/project_memory.py" guide high-impact-actions
 ```
 
-只在需要时将输出保存到项目内合适位置，先检查目标不存在或明确执行有授权的编辑。模板保留 `{{TASK_ID}}`、`{{DATE}}` 等占位符；`template` 不替换它们。初始化会填入项目标识、任务标识和当天日期，但保留待定义的任务内容。
+只在需要时将模板内容保存到项目内合适位置，先检查目标不存在或明确执行有授权的编辑。模板保留 `{{TASK_ID}}`、`{{DATE}}` 等占位符；`template` 不替换它们。初始化会填入项目标识、任务标识和当天日期，但保留待定义的任务内容。
 
 所有声明都要填入真实对象、范围和观察依据。将模板复制成文件不代表取得批准、完成评审或执行成功。
 
@@ -178,32 +206,56 @@ python3 "$MEMORY_SKILL/scripts/project_memory.py" guide high-impact-actions
 
 ## 架构设计
 
-### 发布结构：4 个文件，各自有明确职责
+### 职责分离，按需读取
 
 ```text
 managing-vibe-project-memory/
 ├── SKILL.md
 ├── README.md
-├── agents/openai.yaml
-└── scripts/project_memory.py
+├── .gitignore
+├── scripts/
+│   ├── init_project_memory.py
+│   ├── check_project_memory.py
+│   └── project_memory.py
+├── references/
+│   ├── continuity-kernel.md
+│   ├── human-alignment.md
+│   ├── visual-alignment.md
+│   ├── high-impact-actions.md
+│   └── parallel-harness.md
+└── assets/project-template/
+    ├── AGENTS.md
+    ├── project/state.yaml
+    ├── templates/task/task.yaml
+    └── optional/
+        ├── decisions.md
+        ├── handoff.md
+        ├── review.md
+        └── action-record.md
 ```
 
-| 文件 | 职责 | 为什么保留 |
+当前共 18 个版本控制文件。这里的目标不是极限压缩，而是让每个文件有明确的读取、执行或维护用途：
+
+| 组成 | 职责 | 不合并的理由 |
 | --- | --- | --- |
-| [SKILL.md](SKILL.md) | 技能识别、恢复流程、按需读取入口 | Agent 的短入口，避免默认装载长文档 |
-| [README.md](README.md) | 用户指南、架构、协议参考与贡献说明 | 人与 Agent 共用的说明来源，不另建重复文档 |
-| [scripts/project_memory.py](scripts/project_memory.py) | 安全初始化、只读校验、7 份模板与资源输出 | 一个可执行文件，不再依赖分散模板或构建产物 |
-| [agents/openai.yaml](agents/openai.yaml) | 展示名称、简述与默认调用提示 | 保留当前宿主的展示/调用便利；不创建子 Agent、不执行程序 |
+| [SKILL.md](SKILL.md) | 技能识别、基本约束、工作流与条件路由 | Agent 的短入口，不默认装载长文档 |
+| [README.md](README.md) | 用户指南、架构与贡献说明 | 面向人阅读，不是运行时协议解析源 |
+| 5 份 [references](references/continuity-kernel.md) | 各场景的唯一详细规则正文 | 直接按文件读取相关场景，不依赖 Python 或文档章节标记 |
+| 7 份 [assets](assets/project-template/AGENTS.md) | 可直接读取、复制和填写的输出模板 | 人工与自动初始化共用，不把模板藏进代码 |
+| [初始化器](scripts/init_project_memory.py) | 预检查、排他创建、冲突处理与有限回滚 | 写入流程与只读检查分开，便于审查 |
+| [检查器](scripts/check_project_memory.py) | 版本、引用、subject、风险与声明一致性验证 | 可独立执行，不引入另一份验证实现 |
+| [统一入口](scripts/project_memory.py) | 转发 init/check；输出现有参考文件或模板 | 保留已发布的命令用法，只有路由，没有复制的业务逻辑 |
+| [.gitignore](.gitignore) | 忽略常见系统与 Python 缓存 | 降低贡献时误提交无关产物的概率 |
 
-这是保留现有运行能力、使用说明和 UI 元数据的紧凑布局，不是声称技能标准强制要求 4 个文件。`agents/openai.yaml` 在标准结构中是可选元数据，见 [官方说明](https://learn.chatgpt.com/docs/build-skills)。
+不分发 OpenAI 专用的 `agents/openai.yaml`；技能入口与核心能力不依赖该元数据。代价是没有该配置提供的自定义展示名称与默认提示，不宣称宿主 UI 完全不变。
 
-仓库不另外分发测试目录、历史协议实现、兼容入口、模板副本或独立贡献文档。需要生成的项目记忆不属于技能安装文件；它们留在使用者自己的项目中。减少文件数不等于删除这些能力。
+不恢复测试目录、历史协议实现、构建产物或重复贡献文档。初始化、校验和并行工作等现有能力不因减少文件而合并到难以定位的长文件中。
 
 ### 数据流与单一事实来源
 
-Agent 先读取 `SKILL.md`，再按需要用 `guide` 读取具体规则、用 `init` 创建项目记忆、用 `check` 验证记录。README 不需要整份注入每次对话；五个协议段落有稳定 ID 与边界标记，可单独输出。
+Agent 读取 `SKILL.md`，恢复目标项目的 `AGENTS.md → state.yaml → task.yaml`，然后只读取触发场景的参考文件。需要记录时直接打开相应模板；需要机械验证时运行检查器。README 中的概览帮助使用者理解设计，不承担协议存储或提取职责。
 
-项目状态只管理恢复焦点；任务管理工作边界；决定、交接、评审和操作记录各自管理对应事实；Git 管理文件内容与历史。其他地方引用它们，不复制一份长期可编辑的“第二真相”。详细字段归属见[连续性内核](#continuity-kernel)。
+项目状态只管理恢复焦点；任务管理工作边界；决定、交接、评审和操作记录各自管理对应事实；Git 管理文件内容与历史。其他地方引用它们，不复制一份长期可编辑的“第二真相”。详细字段归属见[连续性内核](references/continuity-kernel.md)。
 
 ### 最小内核与按需规则
 
@@ -228,31 +280,31 @@ Agent 先读取 `SKILL.md`，再按需要用 `guide` 读取具体规则、用 `i
 
 ### 从哪里开始读源码
 
-脚本保持可读的普通 Python，不使用压缩、编码资源包或动态生成执行代码。可按下列符号定位，不必通读整个文件后才能改一个功能：
+脚本保持可读的普通 Python，不使用压缩、编码资源包或动态生成执行代码。读写职责分开，规则与模板直接可读。可按下列入口定位：
 
 | 目标 | 首要入口 |
 | --- | --- |
-| 修改生成的约定或记录模板 | `TEMPLATES` |
-| 修改初始化流程与冲突处理 | `initialize`、`incompatible_existing_authority` |
-| 检查文件创建安全性 | `secure_exclusive_write`、`unsafe_target_reason` |
-| 修改 CLI | `build_parser`、`main` |
-| 修改项目/任务验证 | `check_project_v3`、`v3_validate_task` |
-| 修改引用约束与声明新鲜度 | `v3_project_relative_path`、`v3_validate_subject`、`v3_worktree_digest` |
-| 修改外部操作或视觉校验 | `v3_validate_action_record`、`v3_validate_visual_artifact`、`validate_adaptive_html_surface` |
-| 修改按需协议读取 | `GUIDE_SECTIONS`、`read_guide` 与 README 中成对的 `guide:*` 标记 |
+| 修改生成的约定或记录模板 | `assets/project-template/` 对应文件 |
+| 修改初始化流程与冲突处理 | 初始化器的 `initialize`、`incompatible_existing_authority` |
+| 检查文件创建安全性 | 初始化器的 `secure_exclusive_write`、`unsafe_target_reason` |
+| 修改子命令参数 | 初始化器/检查器的 `build_parser` 或 `main` |
+| 修改项目/任务验证 | 检查器的 `check_project_v3`、`v3_validate_task` |
+| 修改引用约束与声明新鲜度 | 检查器的 `v3_project_relative_path`、`v3_validate_subject`、`v3_worktree_digest` |
+| 修改外部操作或视觉校验 | 检查器的 `v3_validate_action_record`、`v3_validate_visual_artifact` |
+| 修改打印资源与统一入口 | `project_memory.py` 的 `GUIDE_SECTIONS`、`TEMPLATE_FILES`、`main` |
 
-`main(argv)` 可接受参数列表，`check_project_v3(project_root, mode)` 返回错误列表。它们便于本地实验，但当前不承诺稳定的 Python 库 API。
+初始化器/检查器的 `main(argv)` 可接受参数列表，`check_project_v3(project_root, mode)` 返回错误列表。这些便于本地实验，但当前不承诺稳定的 Python 库 API；推荐通过已记录的 CLI 使用。
 
 ### 扩展原则
 
 1. 优先解决可复现的实际需求，避免给普通任务新增无条件表格或审批步骤。
 2. 新字段先确认唯一归属。项目特有数据可放在 `x_*` 扩展中；复杂结构使用项目内引用文件，不引入第二套全局状态。
 3. 核心 YAML 使用支持的扁平结构。需要增加核心字段或语法时，同步考虑初始化读取与检查读取，不能只改某一端。
-4. 规范变化同步更新 README 协议段落、相关模板和验证逻辑；新增读取段落要同步 `GUIDE_SECTIONS` 与 `SKILL.md` 的路由。
+4. 规范变化同步更新对应参考文件、相关模板和验证逻辑；新增场景要同步 `SKILL.md` 的条件路由。需要命令输出该资源时再更新 `GUIDE_SECTIONS` / `TEMPLATE_FILES`。README 只保留概览与链接，不复制协议全文。
 5. 不削弱只读检查、排他创建、引用边界和对已有工作的保护。
 6. 引入运行依赖、增加发布文件或改变协议前，先在 Issue 中说明必要性与对安装者的影响。当前不维护历史协议兼容层。
 
-### 本地验证
+### 可复现的本地验证
 
 在克隆仓库的根目录执行以下冒烟流程；演示项目建在临时目录中，不会进入发布目录。`pwd -P` 将系统临时目录转为真实路径，避免 macOS 的 `/var` 符号链接触发保护。
 
@@ -274,6 +326,17 @@ git diff --check
 预期：预览不写入；第一次初始化只创建 3 个文件；重复初始化跳过已有文件；草稿通过 focus/full。这个流程是安装与接口检查，**不能代替修改所影响功能的回归验证**。
 
 涉及行为修改时，请在独立临时项目中覆盖正例和拒绝路径，例如越界引用、已有约定冲突、符号链接、过期 subject、未核实的外部结果。修改后再次检查源项目内容未被意外改写。无需把个人测试工程、日志、缓存、真实项目记忆或旧版本兼容代码带进这个安装目录。
+
+### 行为效果与测试范围
+
+脚本回归检查用于确认初始化、拒绝路径、引用和声明一致性，不能代替 Agent 的实际使用评估。修改技能指令或资源布局时，还应让新的会话从入口完成真实任务，例如：
+
+- 只读恢复：面对一个已有工作区，找出当前目标、受保护内容和下一步，检查是否误读无关协议或误当交接为权威。
+- 低风险修改：完成一个局部修复并留下足够的恢复信息，不无条件创建评审/交接包。
+- 受限宿主：不运行 Python，仍能直接找到所需协议和模板，并明确机械检查未运行。
+- 高影响或视觉任务：面对不确定操作结果、缺失授权或缺少真实渲染证据时，不把它们当作完成。
+
+验证结果应记录实际模型/宿主、能力限制、输入场景、观察到的行为与未覆盖范围。独立上下文验证不等同于已经验证所有模型、平台或真实宿主。核心脚本和安全边界需维持回归覆盖；发布目录中不存放测试工程，并不意味着修改可以免测试。
 
 ### 提交 Issue
 
@@ -325,399 +388,26 @@ git diff --check
 
 不会。当前只支持 schema 3 / protocol 3.0，不自动迁移或重写其他版本。focus 只检查选中的任务，不能据此声称未选中的历史记录也通过了校验。
 
-**agents/openai.yaml 与项目 AGENTS.md 是同一个东西吗？**
+**项目 AGENTS.md 是 OpenAI 专用配置吗？**
 
-不是。前者是宿主读取的技能 UI 元数据；后者是初始化到使用者项目中的连续性约定。
+不是。这里生成的是可直接阅读的项目连续性约定；是否自动发现它取决于宿主。它与已不分发的 OpenAI UI 元数据不是同一文件。任意宿主都可以在具备读取能力时按明确指示阅读它。
 
-**为什么没有 tests、CHANGELOG、CONTRIBUTING 或独立模板文件？**
+**为什么保留独立模板，却没有 tests、CHANGELOG 和 CONTRIBUTING？**
 
-仓库工作树面向直接安装。贡献指引集中在此 README，模板是可读取、可输出的脚本常量，验证可在独立目录中完成。工作树的精简不代表 Git 历史被清除；历史提交仍可能含有早期开发文件。
+模板和参考文件直接服务于技能使用，不是开发残留。贡献指引集中在此 README；测试在独立工作目录中执行，安装者无需运行测试或构建。工作树的精简不代表 Git 历史被清除；历史提交仍可能含有早期开发文件。
 
 <a id="protocol-reference"></a>
 
 ## 协议参考
 
-以下五节是 Agent 与开发者共用的详细运行规则，保留英文协议正文，以避免再维护一份含义可能漂移的副本。中文概览用于理解设计；调整具体协议时修改对应正文和实现。
+详细运行规则只维护在以下独立文件中。Agent 可直接阅读，不要求执行命令、扫描长 README 或理解特定 UI 配置。
 
-| 章节 ID | 阅读时机 |
+| 参考文件 / guide 名称 | 阅读时机 |
 | --- | --- |
-| [continuity-kernel](#continuity-kernel) | 创建、修改或恢复记录，理解字段归属与声明新鲜度 |
-| [human-alignment](#human-alignment) | 人类保留的选择、范围/风险变化、必要的完成验收 |
-| [visual-alignment](#visual-alignment) | 未决视觉/交互选择、重要 UI 或设计一致性声明 |
-| [high-impact-actions](#high-impact-actions) | 生产、发布、支付、消息、敏感数据或不可逆效果 |
-| [parallel-harness](#parallel-harness) | 独立执行环境实际并发修改并需要恢复与合并 |
-
-使用 `guide <章节 ID>` 可只读取目标节；不要求普通任务加载全部规则。
-
-<a id="continuity-kernel"></a>
-
-<!-- guide:continuity-kernel:start -->
-## Continuity Kernel v3.0
-
-### Boundary
-
-The kernel makes work recoverable across sessions, agents, and harnesses. It does not orchestrate their internal execution. A capable incoming participant should locate the current focus, understand its boundary, inspect the real repository state, and continue without replaying chat or loading all history.
-
-Persist information only when all three are true:
-
-1. Future work needs it.
-2. Git, code, tests, or current tooling cannot cheaply and reliably derive it.
-3. It remains valid across the intended handoff boundary.
-
-### Minimal Layout
-
-```text
-project-root/
-  AGENTS.md
-  project/state.yaml
-  work/active/T-001-initial/task.yaml
-```
-
-Optional, event-triggered task files include `decisions.md`, `handoff.md`, `review.md`, `evidence/`, `design/`, and one or more Markdown action records. Milestones and harness adapters are optional. Empty future-facing packages must not be initialized by default.
-
-### Authority And Writable Homes
-
-Apply this precedence when facts conflict:
-
-1. Current direct human instruction and platform rules
-2. `project/state.yaml` for project recovery focus
-3. Focus task `task.yaml` for current goal and boundary
-4. Referenced durable decisions
-5. Relevant implemented code, tests, and Git history
-6. Handoff and review claims
-7. Archived records and chat summaries
-
-A higher source does not silently erase a lower one. Stop before an affected edit, expose the conflict, and record the resolution in the owning file.
-
-| Fact | One writable home |
-|---|---|
-| Default recovery focus | `project/state.yaml` |
-| Goal, scope, non-goals, acceptance, risk, status | task `task.yaml` |
-| Durable downstream choice | task or project decision record |
-| File bytes and chronology | Git |
-| Outgoing progress claim | task `handoff.md` |
-| Formal verification verdict | task `review.md` |
-| Durable reproducible proof | task `evidence/` |
-| High-impact external action state | task action record referenced by `action_refs` |
-
-Prefer references over copied prose. Do not duplicate Git hashes merely to identify local committed content unless a review verdict must name its exact subject.
-
-### Project State Schema v3
-
-```yaml
-schema_version: 3
-protocol_version: "3.0"
-project_id: SAMPLE
-project_name: "Sample"
-status: active
-active_task: T-001-initial
-updated: "2026-08-19"
-```
-
-`active_task` is the default recovery focus. It may point to proposed, blocked, or executing work and is never a repository-wide lock. Multiple directories may coexist in `work/active/`. A project may add fields without making them universal protocol requirements.
-
-### Task Schema v3
-
-```yaml
-schema_version: 3
-protocol_version: "3.0"
-id: T-001-initial
-status: proposed
-goal: Deliver one observable outcome
-scope: [src/]
-non_goals: [Production deployment]
-acceptance: [Relevant tests pass]
-risk: low
-risk_reasons: [local-reversible]
-protected_paths: []
-context_refs: []
-decision_refs: []
-evidence_refs: []
-updated: "2026-08-19"
-```
-
-References are project-root-relative, remain inside the project, and must not
-traverse symlinks. An external mutable link may appear only as context inside a
-local referenced note; it is not authority. `scope` is a semantic boundary, not
-a mandatory exact file allowlist. `protected_paths` is exact hard protection:
-do not modify, stage, commit, delete, move, overwrite, or stash those paths.
-
-Status is descriptive recovery metadata. Protocol 3.0 does not impose one fixed lifecycle or forbid project extensions. Only a declared claim activates the matching consistency rule: for example, `done` requires satisfied acceptance and no unresolved required overlay; passed verification requires an exact reviewed subject and verdict; design approval requires human evidence; an executed external action requires an action record.
-
-Unknown extension fields are allowed and ignored safely unless they contradict a core field or activate a declared overlay.
-
-### Event-Triggered Artifacts
-
-#### Decisions
-
-Create a decision only when future work depends on a choice that code/Git cannot explain reliably. Record the question, decision, subject/version when staleness matters, scope/conditions, and what was not decided.
-
-Natural human language is valid when the visible choice is singular and unambiguous. Do not require a magic phrase or duplicate hashes. Provider-backed artifacts need a stable revision; keep a local export only when provider-less recovery is material.
-
-#### Handoff
-
-The outgoing agent creates or refreshes `handoff.md` without waiting for a human request when responsibility actually moves and task/Git/decisions/tests omit transient semantics needed next. This is an event response, not something an agent asks a human to request and not a human gate. Its YAML front matter owns a project-local task ref, exact subject, optional project-local subject ref, and bounded subject paths. The body records what is complete/incomplete, local state, observed checks, hazards, and next useful action without duplicating the subject metadata.
-
-Skip handoff when the minimal kernel and repository already answer those questions. The task stores only `handoff_ref` and `handoff_current`; the artifact front matter owns its subject. Handoff is a fallible claim, not authority, approval, verification, or a replacement for inspecting Git. A changed subject sets `handoff_current: false` until refreshed.
-
-#### Review And Evidence
-
-Create `review.md` only for a formal verdict. Its YAML front matter solely owns the project-local task ref, exact subject/ref/paths, reviewer mode (`self_check`, `fresh_context`, `independent_actor`, or `human`), whether the actor modified the subject, covered `action_refs`, and verdict. The task owns only `review_ref` and `review_current`. The body owns evidence, findings, and limitations. Builder and verifier are responsibilities/events, not mandatory static IDs or proof of independence.
-
-A low-risk self-check may remain a transient test observation and need not create `review.md`. High-impact completion requires a current `independent_actor` review record whose `action_refs` cover every exact action record. If the reviewer modifies the subject, that record cannot establish independent verification of the changed subject.
-
-Create durable evidence only when later reproduction, audit, visual comparison, or high-impact verification needs it. Test output that can be cheaply rerun need not always be copied into the repository.
-
-### Validation Modes
-
-- Default/focus mode validates state, recovery-focus task, refs, protected-path consistency, subject freshness, activated overlays, and contradictions between status and results.
-- `--full` validates all managed active/archived records and completion/audit consistency.
-
-Both modes require schema 3 / protocol 3.0 for every selected record. Other
-declared versions are rejected without modifying them.
-
-Mechanical validation must not judge aesthetics, prose quality, agent topology, or implementation wisdom. It must not require fixed Markdown headings, minimum prose length, a singleton active task, static builder/verifier inequality, universal readout packages, or a fixed number/format of visual gates.
-
-### Record Templates
-
-Export a built-in template with
-`python3 <skill-dir>/scripts/project_memory.py template <name>`.
-Names are `agents`, `state`, `task`, `decisions`, `handoff`, `review`, and
-`action`; see the [template guide](#commands) for event-to-reference mapping.
-The command prints to stdout without writing. The initializer deliberately
-does not create optional records.
-
-Only save an optional template when its event occurs. Replace all placeholders,
-including `{{TASK_ID}}`, and use project-root-relative references. Bind claims
-to actual subject paths or artifact refs. Copying a template establishes neither
-approval nor a successful check.
-
-### Always-Hard Rules
-
-- Resolve project and focus task without symlink redirection.
-- Treat pre-existing/source-unknown modified or untracked work as owned; never silently reset, clean, stash, overwrite, stage, or commit it.
-- Preserve `protected_paths` exactly.
-- Never transform agent-relayed prose into human authorization.
-- Re-align if scope, acceptance, or high-impact consequences change.
-- Reconcile uncertain high-impact action results before retry.
-- Keep completion, testing, independent verification, design approval, and target-user validation distinct.
-- Invalidate a claim when its named commit, patch, artifact revision, or render changes.
-- Treat concurrent rename between validation and use, hardlink aliases, and mutable or locally rewritten Git history as trust boundaries. Re-resolve and re-inspect at the action boundary; local validation is not tamper-proof provenance.
-<!-- guide:continuity-kernel:end -->
-
-<a id="human-alignment"></a>
-
-<!-- guide:human-alignment:start -->
-## Risk-Adaptive Human Alignment
-
-### Goal
-
-Human alignment prevents semantic drift without turning every task into ceremony. It is a reasoning lens, not a mandatory package tree.
-
-| Level | Question |
-|---|---|
-| H0 | What outcome, boundary, non-goals, and evidence define this work? |
-| H1 | Which choices remain autonomous, and which does the human reserve? |
-| H2 | Has a material decision or consequence appeared that changes authority? |
-| H3 | What changed, what remains, and must the human accept residual risk or preference? |
-
-### Start Without Duplicate Ceremony
-
-A clear current human instruction authorizes work within its visible scope when risk is low and reversible. Normalize it into the task boundary if durable continuity needs the fact; do not ask the human to reapprove your paraphrase.
-
-For medium/high risk, expose the outcome, boundary, acceptance, principal consequences, and human-owned choices in a medium the human can understand before acting. Use exact versions or stable revisions only when ambiguity or staleness would matter. The protocol does not prescribe Markdown, HTML, JSON receipts, or a fixed gate count.
-
-### Trigger H2 Only On Material Change
-
-Pause for a human decision when:
-
-- scope, acceptance, or risk increases;
-- a confirmed key assumption fails;
-- an irreversible, sensitive-data, production, security, financial, publication, message, legal, or other external consequence appears;
-- implementation would materially deviate from a human-approved baseline;
-- a genuine product-value choice remains undecided.
-
-Do not pause for tool selection, code organization, test strategy, local diagnostics, reversible fixes, or another harness taking over the same confirmed work.
-
-### Natural Decision Semantics
-
-Ordinary language is sufficient when one current choice is visible and
-unambiguous. “采用 A”, “okay”, or “可以” counts only after it is normalized as a
-`direct-human-instruction` whose referent is that visible choice. Record the
-conditions and what remains undecided.
-
-These do not authorize an unseen or ambiguous boundary:
-
-- generic “下一步”, “继续”, or silence;
-- another agent’s summary that the human said yes;
-- a test result or reviewer recommendation;
-- a button/checkbox inside a review artifact;
-- approval of another task, version, or decision.
-
-Repository records are trusted project input, not identity authentication. Use external or signed attestation only when identity assurance is itself required.
-
-### Durable Decision Record
-
-Create a decision only if downstream work depends on it and the choice is not reliably derivable. Keep it compact:
-
-```markdown
-### <short stable decision name>
-
-- Question: ...
-- Decision: ...
-- Subject: task, artifact revision, commit, or bounded proposal
-- Scope/conditions: ...
-- Not decided: ...
-- Source: direct human instruction, verified review, or other explicit authority
-```
-
-Bind to a commit, patch, or stable artifact revision when later changes could invalidate the choice. A local Git commit already content-addresses its bytes; another digest is unnecessary. A provider URL must identify a fixed revision, not “latest”.
-
-### Human Readout And H3
-
-Present a human-readable result when it materially helps the owner understand the outcome, tradeoffs, proof, or next decision. Choose text, table, diagram, visual, demo, or another medium adaptively.
-
-Exact H3 acceptance is required only for high-impact work, unresolved residual risk, material deviation/waiver, or when the human explicitly reserved completion acceptance. Ordinary low-risk completion does not require a separate acceptance round.
-
-Always distinguish implemented, checks passed, independently verified, design preference approved, residual risk accepted, and target-user validated. Neither engineering verification nor an attractive artifact implies the others.
-<!-- guide:human-alignment:end -->
-
-<a id="visual-alignment"></a>
-
-<!-- guide:visual-alignment:start -->
-## Adaptive Visual Alignment
-
-### Activate Only When Useful
-
-Use this overlay when the human reserves aesthetic or experience preference; navigation, information architecture, interaction, or product meaning is genuinely undecided; implementation would create high sunk cost before visual misunderstanding is found; work claims conformance to an approved design; or UI controls privacy, safety, deletion, payment, publication, messaging, or another consequential action.
-
-Do not force it for every UI file. It may be unnecessary for a disposable prototype, a mechanical fix inside an approved system, a local reversible tweak, work with no visible change, or explicit delegation of design judgment to the agent.
-
-### Choose Medium And Depth Adaptively
-
-Use the smallest medium that makes the real decision inspectable: a project-local Figma export, image, PDF, video, HTML, native preview/demo capture, manifest, or composite; alternatively use a stable immutable provider-revision subject. No medium or fixed gate count is universally authoritative.
-
-Use L1–L5 as questions, not mandatory gates:
-
-| Level | Makes inspectable |
-|---|---|
-| L1 | user journey and state transitions |
-| L2 | page relationships, navigation, information priority |
-| L3 | complete normal and important exceptional states |
-| L4 | hierarchy, density, copy, appearance, interaction, accessibility |
-| L5 | approved baseline compared with a real implementation render |
-
-One artifact may cover several levels. Split experience and visual reviews only when doing so materially reduces misunderstanding. A new page does not mechanically require two approvals.
-
-A durable visual baseline must actually expose the claimed visual or interaction decision; prose describing a screen is not a visual baseline. A provider artifact needs a fixed revision and exact frame/node scope. Keep a local export when provider-less recovery matters. A mutable external link may appear only as context through a project-local note; it is not authority.
-
-When activated, the task always names stable `approved_baseline_subject` and
-`implementation_render_subject`, plus a substantive `baseline_decision_ref` and
-`conformance_status`. An immutable provider/artifact subject that includes its
-revision and exact frame, node, page, or capture scope may stand alone; its
-project-local `approved_baseline_ref` or `implementation_render_ref` is an
-optional recovery/context export. A `sha256:` or other local-byte subject must
-have the matching project-local ref. Mutable provider URLs remain context only
-through a local note. A checker can validate stable identity shape, local
-reference containment, and record consistency; it cannot judge aesthetics,
-prove provider provenance, or prove that an artifact communicates its claimed
-meaning.
-
-### Decisions
-
-Before expensive implementation, expose the unresolved human-owned choice and state what the decision would and would not authorize. Natural confirmation is valid only after it is normalized as a direct human instruction with one unambiguous current referent. Record a substantive decision, its subject/revision, scope, conditions, and what remains undecided.
-
-If the human delegates design, record that boundary and let the agent exercise current design capability. Describe the result as agent-designed unless the human later approves it.
-
-### Conformance
-
-When an approved baseline exists, compare it with a durable capture of the real
-implementation render. A conformance claim requires a substantive task
-`review_ref` whose exact subject is current; that formal review binds front-matter
-`baseline_subject` and `implementation_render_subject` to the exact task values,
-then records pages/states and environment, material differences and disposition,
-and limitations.
-
-Source code, snapshot-test success, or a mockup alone cannot prove rendered conformance. HTML can be a capable baseline only when it exposes actual visual structure; HTML is not itself a runtime implementation render. If rendering is unavailable, state that conformance was not verified. Without a human-approved baseline, do not claim approved conformance.
-
-Engineering correctness, human aesthetic preference, accessibility verification, and target-user validation remain separate conclusions. A changed baseline revision or implementation subject invalidates only the affected comparison/approval.
-<!-- guide:visual-alignment:end -->
-
-<a id="high-impact-actions"></a>
-
-<!-- guide:high-impact-actions:start -->
-## High-Impact External Actions
-
-### Trigger
-
-Activate this overlay for production deployment, publication, real-user or sensitive data, payment, messaging, account changes, security or safety controls, legal commitments, destructive/irreversible operations, or a similarly consequential external effect. Code that merely prepares an action is not execution.
-
-### Action Identity And Record
-
-Create a task-local action record when an action is authorized or attempted. `action_id` is unique per logical external effect; attempts/reconciliation remain attached to that identity rather than manufacturing a second logical effect. Its identity binds target, environment, bounded payload, and exact subject (commit, worktree, artifact hash, or immutable provider revision).
-
-Record: authority source and limits; one-shot/idempotency data; preconditions; expiration/timeout; status; observed result; provider receipt when safe; reconciliation; and compensation/recovery path. Never store secrets.
-
-Status is exactly one of `planned`, `authorized`, `executing`, `succeeded`,
-`failed`, `unknown`, or `compensated`. Any claimed high-impact completion
-requires action record(s), or the task must explicitly state
-`external_effects: none`.
-
-`authorization_basis` is lightweight evidence of bounded authority. It becomes required only when actual execution or completion is claimed; it does not require a versioned start package.
-
-### Authority
-
-Authority must cover exact consequence, target, environment, subject, and meaningful payload bounds. Plan approval does not imply execution approval unless the human clearly included execution. Agent-relayed summaries are not human authority. Re-align if scope or consequence grows.
-
-### Ambiguous Outcomes
-
-Treat timeout and callback/event ordering as order-independent observations. If outcome is ambiguous:
-
-1. Mark it `unknown` with `retry_allowed: false`.
-2. Query the destination using action identity or receipt.
-3. Reconcile actual external state before retrying.
-4. Retry only after non-execution is established or idempotency makes duplication impossible.
-
-Record the conclusion in `reconciliation_result` and project-local
-`reconciliation_ref`. Arrival order of timeout, callback, webhook, and poll
-observations does not determine the result; reconciled external state does.
-
-Never blind-retry payment, messaging, publication, destructive change, or another non-idempotent effect.
-
-High-impact completion requires a current independent review record to inspect exact subject, authority, observed external state, and recovery path; its `action_refs` cover the exact action record(s). Verification does not accept residual risk for the human.
-<!-- guide:high-impact-actions:end -->
-
-<a id="parallel-harness"></a>
-
-<!-- guide:parallel-harness:start -->
-## Parallel Harness Work
-
-### Boundary
-
-Activate only when separate harnesses really mutate concurrently and their outputs must be resumed or merged independently. Do not create a default workstream registry, lock service, graph, or role topology. `active_task` is recovery focus, not a concurrency lock; internal subagents remain outside this protocol.
-
-### Git-Native Coordination
-
-Prefer one branch/worktree per independently mutating harness, a recorded common base, exact source heads, and integration verification on the combined result. Semantic ownership or overlap annotations are hints, not locks or proof of resolution.
-
-Complex harness topology belongs in a referenced native file. If a checker-readable extension is useful, keep `x_*` fields flat or place opaque topology under one top-level ignored extension block.
-
-Pre-existing/source-unknown modified and untracked work remains protected. Never silently reset, clean, stash, overwrite, stage, or commit it.
-
-Branch/worktree separation does not eliminate hostile concurrent rename between
-check and use, hardlink aliases, or locally rewritten Git history. Resolve real
-paths and recheck subjects at the mutation/merge boundary; treat Git and the
-local filesystem as trusted operational inputs, not tamper-proof provenance.
-
-### Handoff And Merge
-
-At a real cross-harness handoff, create a task-local handoff only when Git/task/tests do not expose needed transient semantics. Front matter names a project-local `task_ref` and exact subject; the body records base/head or patch, dirty state, complete/incomplete work, checks, hazards, and next action. The receiver verifies it. Taking over the same boundary needs no new approval.
-
-Before integration, confirm heads, protect unrelated local work, review conflicts semantically, run combined verification, and update `integration_status`. Overlap is resolved only when status is `resolved` or `merged` and the record references concrete resolution/merge evidence. Never silently choose the newest agent output.
-
-### Verification Responsibility
-
-Builder and verifier describe events, not fixed agent IDs. Modes are `self_check`, `fresh_context`, `independent_actor`, and `human`. Low reversible work may use self-check; medium work benefits from fresh context; high-impact work requires independent actor.
-
-If a reviewer modifies the subject, its prior verdict is stale. Reverify the new commit, patch, or artifact and record the actual mode.
-<!-- guide:parallel-harness:end -->
+| [continuity-kernel](references/continuity-kernel.md) | 创建、修改或恢复记录，理解字段归属与声明新鲜度 |
+| [human-alignment](references/human-alignment.md) | 人类保留的选择、范围/风险变化、必要的完成验收 |
+| [visual-alignment](references/visual-alignment.md) | 未决视觉/交互选择、重要 UI 或设计一致性声明 |
+| [high-impact-actions](references/high-impact-actions.md) | 生产、发布、支付、消息、敏感数据或不可逆效果 |
+| [parallel-harness](references/parallel-harness.md) | 独立执行环境实际并发修改并需要恢复与合并 |
+
+[记录模板索引](references/continuity-kernel.md#record-templates)说明哪些事件需要哪种模板。需要在终端显示某一节时，可选用 `guide <名称>`；它只读取上表的同一文件。
