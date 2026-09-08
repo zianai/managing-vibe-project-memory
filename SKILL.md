@@ -30,9 +30,9 @@ architecture, branch names, or commit counts.
 Preview before initialization:
 
 ```bash
-python3 <skill-dir>/scripts/init_project_memory.py <project-root> --project-name "Project Name" --dry-run
-python3 <skill-dir>/scripts/init_project_memory.py <project-root> --project-name "Project Name"
-python3 <skill-dir>/scripts/check_project_memory.py <project-root>
+python3 <skill-dir>/scripts/project_memory.py init <project-root> --project-name "Project Name" --dry-run
+python3 <skill-dir>/scripts/project_memory.py init <project-root> --project-name "Project Name"
+python3 <skill-dir>/scripts/project_memory.py check <project-root>
 ```
 
 Default initialization creates exactly `AGENTS.md`, `project/state.yaml`,
@@ -49,26 +49,39 @@ tasks, including archives, before completion or audit.
 
 ## Load The Relevant Detail
 
-- Read [continuity-kernel.md](references/continuity-kernel.md) when creating or
-  updating records: schemas, field ownership, subjects, and claim freshness.
-- Read [human-alignment.md](references/human-alignment.md) when a human-owned
-  decision, material scope/risk change, or reserved acceptance matters.
-- Read [visual-alignment.md](references/visual-alignment.md) when visual
-  preference, unresolved IA/interaction, costly implementation, consequential
-  UI, or design-conformance claims activate visual alignment.
-- Read [high-impact-actions.md](references/high-impact-actions.md) for
-  production, publication, sensitive data, payment, messaging, security, legal,
-  or irreversible effects.
-- Read [parallel-harness.md](references/parallel-harness.md) only when separate
-  harnesses actually mutate concurrently and need independent recovery/merging.
+Runtime references live in bounded README sections, not separate files. Read
+only the section needed for the current work:
+
+```bash
+python3 <skill-dir>/scripts/project_memory.py guide <section>
+```
+
+- [continuity-kernel](README.md#continuity-kernel): creating or updating records,
+  schemas, field ownership, subjects, and claim freshness.
+- [human-alignment](README.md#human-alignment): a human-owned decision, material
+  scope/risk change, or reserved acceptance.
+- [visual-alignment](README.md#visual-alignment): visual preference, unresolved
+  IA/interaction, costly implementation, consequential UI, or conformance claims.
+- [high-impact-actions](README.md#high-impact-actions): production, publication,
+  sensitive data, payment, messaging, security, legal, or irreversible effects.
+- [parallel-harness](README.md#parallel-harness): separate harnesses actually
+  mutate concurrently and need independent recovery or merging.
+
+The section ID is the link label above. If command execution is unavailable,
+read the matching README section between its `guide:<section>:start` and
+`guide:<section>:end` markers. Do not load the entire README by default.
 
 ## Record Events And Claims
 
 Create decisions only for durable choices; handoffs only when responsibility
 crosses a boundary and task/Git/decisions/tests omit needed transient semantics;
 reviews only for formal verdicts. Create evidence and action records when their
-use is triggered. Use the linked [record templates](references/continuity-kernel.md#record-templates)
-as starting points, never as empty mandatory packages.
+use is triggered. Export the appropriate built-in template with
+`python3 <skill-dir>/scripts/project_memory.py template <name>`, where `name`
+is `decisions`, `handoff`, `review`, or `action`. These commands only print
+unfilled text. Save it only when needed, preserve existing files, replace
+placeholders, and wire the actual project-relative refs; see
+[template usage](README.md#commands). Never create empty mandatory packages.
 
 Keep implementation, test success, independent verification, human design
 approval, completion acceptance, and target-user validation distinct. Bind
