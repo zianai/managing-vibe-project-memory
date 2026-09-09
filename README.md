@@ -514,7 +514,7 @@ python3 "<skill-dir>/scripts/check_project_memory.py" "<project-root>" --full
 managing-vibe-project-memory/
 ├── SKILL.md                         # 技能入口与条件路由
 ├── README.md                        # 使用与开发指南
-├── .gitignore
+├── LICENSE                         # MIT 许可证
 ├── assets/project-template/         # 最小内核与可选记录模板
 ├── references/
 │   ├── continuity-kernel.md         # schema、权威、恢复与验证规则
@@ -602,4 +602,4 @@ git diff --check
 
 ## 许可
 
-本仓库尚未指定许可证。使用、修改和分发的许可事宜请与维护者确认，参见 [GitHub 说明](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/licensing-a-repository)。
+本项目采用 [MIT 许可证](LICENSE)，Copyright (c) 2026 zianai。
