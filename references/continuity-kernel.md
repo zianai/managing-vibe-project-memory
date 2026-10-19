@@ -118,6 +118,7 @@ Create durable evidence only when later reproduction, audit, visual comparison, 
 
 - Default/focus mode validates state, recovery-focus task, refs, protected-path consistency, subject freshness, activated overlays, and contradictions between status and results.
 - `--full` validates all managed active/archived records and completion/audit consistency.
+- `ERROR` lines fail the check (exit `1`). `WARNING` lines follow the errors and are advisory; a check with only warnings exits `0`. Prose signals in `goal`/`scope` produce warnings only; declared `risk_reasons`, `effect_*`, `external_effects`, and `action_refs` set the risk floor.
 
 Both modes require schema 3 / protocol 3.0 for every selected record. Other
 declared versions are rejected without modifying them.

@@ -4,6 +4,8 @@
 
 Activate this overlay for production deployment, publication, real-user or sensitive data, payment, messaging, account changes, security or safety controls, legal commitments, destructive/irreversible operations, or a similarly consequential external effect. Code that merely prepares an action is not execution.
 
+The task owns its risk rating. Declarations activate the overlay mechanically: a high-impact `risk_reasons` entry, a high-impact `effect_*` value, `external_effects` other than `none`, or any `action_refs`. The checker also scans `goal` and `scope` prose for consequential wording, but a match is only a `WARNING`: it never raises the floor or fails the check. If the effect is real, set `risk: high` or add the matching `risk_reasons` entry.
+
 ## Action Identity And Record
 
 Create a task-local action record when an action is authorized or attempted. `action_id` is unique per logical external effect; attempts/reconciliation remain attached to that identity rather than manufacturing a second logical effect. Its identity binds target, environment, bounded payload, and exact subject (commit, worktree, artifact hash, or immutable provider revision).

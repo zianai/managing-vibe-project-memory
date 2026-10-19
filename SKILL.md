@@ -59,7 +59,10 @@ same implementations. Its `guide` and `template` commands only print existing
 resource files; they are not prerequisites for reading them.
 
 Use default/`--focus` checks during work and `--full` for all current-protocol
-tasks, including archives, before completion or audit.
+tasks, including archives, before completion or audit. `ERROR` lines fail the
+check; `WARNING` lines are advisory and keep exit code `0`. A warning that the
+goal or scope mentions a consequential effect asks you to judge it: if the
+effect is real, raise `risk` or add the matching `risk_reasons` entry.
 
 ## Load The Relevant Detail
 

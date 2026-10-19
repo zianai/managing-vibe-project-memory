@@ -297,6 +297,8 @@ python3 scripts/check_project_memory.py [project_root] [mode]
 
 验证器检查结构、引用、状态与声明一致性，但不会判断审美质量、文字质量、Agent 拓扑或实现方案是否聪明。
 
+输出中 `ERROR` 使检查失败；`WARNING` 列在错误之后，仅作提示，只有警告时返回码仍为 `0`。若 `goal` / `scope` 文字提到通知用户、发布、支付等高影响效果，检查器只给出警告：效果属实时，请提高 `risk` 或补充对应的 `risk_reasons`；风险下限只由声明的 `risk_reasons`、`effect_*`、`external_effects` 和 `action_refs` 决定。
+
 ### 统一入口与资源读取
 
 `project_memory.py` 的 `init` / `check` 调用上述同一实现，`template` / `guide` 只输出资源：

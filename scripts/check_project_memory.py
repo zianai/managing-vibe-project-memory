@@ -428,6 +428,22 @@ def highest_risk(levels: list[str]) -> str:
     return max(levels, key=lambda value: RISK_LEVEL_RANK[value]) if levels else "low"
 
 
+# Prose signals are advisory: each names the risk_reasons entry that would
+# declare the effect if it is real.
+PROSE_SIGNAL_RISK_REASONS = {
+    "destructive customer-data deletion": "irreversible-or-destructive",
+    "production key invalidation": "security-or-safety",
+    "customer notification": "payment-or-message",
+    "production deployment or public release": "publication-or-deployment",
+    "real customer payment": "payment-or-message",
+    "personal or sensitive data transfer": "real-user-or-sensitive-data",
+    "irreversible migration": "difficult-migration",
+    "security or safety control change": "security-or-safety",
+    "direct real-user state change": "real-user-or-sensitive-data",
+    "binding legal action": "legal-impact",
+}
+
+
 def goal_high_risk_signals(goal: Any) -> list[str]:
     text = re.sub(r"\s+", " ", str(goal or "")).strip().lower()
     if not text:
@@ -1249,6 +1265,7 @@ def v3_validate_task(
     location: str,
     mode: str,
     errors: list[str],
+    warnings: list[str],
 ) -> str | None:
     relative = task_dir.relative_to(project_root)
     if task_dir.is_symlink():
@@ -1345,9 +1362,15 @@ def v3_validate_task(
         high_impact = True
     if as_list(task.get("action_refs")):
         high_impact = True
-    prose_risk_signals = goal_high_risk_signals(task.get("goal")) + goal_high_risk_signals(task.get("scope"))
-    if prose_risk_signals:
-        high_impact = True
+    if risk != "high":
+        prose_risk_signals = dict.fromkeys(
+            goal_high_risk_signals(task.get("goal")) + goal_high_risk_signals(task.get("scope"))
+        )
+        for signal in prose_risk_signals:
+            warnings.append(
+                f"{relative}/task.yaml: goal/scope mentions {signal}; if the effect is real, "
+                f"set risk: high or add risk_reasons entry '{PROSE_SIGNAL_RISK_REASONS[signal]}'"
+            )
     if high_impact and risk in RISK_LEVEL_RANK and risk != "high":
         errors.append(f"{relative}/task.yaml: risk is below the activated high-impact floor")
 
@@ -1546,12 +1569,12 @@ def v3_validate_task(
         or not task.get("implementation_render_subject")
     ):
         errors.append(
-            f"{relative}/task.yaml: conformance claim requires stable approved-baseline and implementation-render subjects"
+            f"{relative}/task.yaml: conformance claim requires stable approved_baseline_subject and implementation_render_subject"
         )
     if conformance in {"matched", "differences_accepted"}:
         if optional_paths.get("baseline_decision_ref") is None:
             errors.append(
-                f"{relative}/task.yaml: approved-baseline conformance requires an explicit human decision reference"
+                f"{relative}/task.yaml: approved-baseline conformance requires an explicit human decision reference in baseline_decision_ref"
             )
         else:
             v3_validate_decision_file(
@@ -1651,7 +1674,7 @@ def v3_validate_task(
         if conformance == "differences_accepted":
             if optional_paths.get("difference_decision_ref") is None:
                 errors.append(
-                    f"{relative}/task.yaml: accepted visual differences require an exact human decision record"
+                    f"{relative}/task.yaml: accepted visual differences require an exact human decision record in difference_decision_ref"
                 )
             else:
                 v3_validate_decision_file(
@@ -1665,7 +1688,7 @@ def v3_validate_task(
     ):
         if str(task.get("visual_alignment_status") or "") not in {"accepted", "delegated"}:
             errors.append(
-                f"{relative}/task.yaml: reserved human visual preference is unresolved"
+                f"{relative}/task.yaml: reserved human visual preference is unresolved; visual_alignment_status must be accepted or delegated"
             )
 
     action_records: list[tuple[Path, dict[str, Any]]] = []
@@ -1739,7 +1762,7 @@ def v3_validate_task(
             for state in states
         ):
             errors.append(
-                f"{relative}/task.yaml: unknown outcome for idempotency key '{key}' requires reconciliation before retry"
+                f"{relative}/task.yaml: unknown outcome for idempotency key '{key}' requires reconciliation (reconciliation_result and reconciliation_ref) before retry"
             )
         effect_rows = sum(state in V3_ACTION_EFFECT_STATUSES for state in states)
         if effect_rows > 1:
@@ -1788,7 +1811,7 @@ def v3_validate_task(
                 or review_subject.startswith("patch:")
             ):
                 errors.append(
-                    f"{relative}/task.yaml: high-impact action review requires a scoped git/worktree subject"
+                    f"{relative}/task.yaml: high-impact action review requires a scoped git/worktree review subject"
                 )
 
     overlap_paths = [str(value).strip() for value in as_list(task.get("parallel_overlap_paths")) if str(value).strip()]
@@ -1845,7 +1868,8 @@ def v3_validate_task(
         )
         if acceptance_required and optional_paths.get("completion_acceptance_ref") is None:
             errors.append(
-                f"{relative}/task.yaml: risk or deviation requires exact Human Completion acceptance before done"
+                f"{relative}/task.yaml: risk or deviation requires exact Human Completion acceptance before done; "
+                "set completion_acceptance_ref to the human acceptance record"
             )
         elif acceptance_required:
             v3_validate_claim_file(
@@ -1856,8 +1880,14 @@ def v3_validate_task(
     return task_id or None
 
 
-def check_project_v3(project_root: Path, mode: str = "focus") -> list[str]:
+def check_project_v3(
+    project_root: Path,
+    mode: str = "focus",
+    warnings: list[str] | None = None,
+) -> list[str]:
     errors: list[str] = []
+    if warnings is None:
+        warnings = []
     selected_root = project_root.absolute()
     selected_symlink = first_symlink_component(selected_root)
     project_root = selected_root.resolve()
@@ -1970,7 +2000,7 @@ def check_project_v3(project_root: Path, mode: str = "focus") -> list[str]:
                 f"{task_path.relative_to(project_root)}: task authority path traverses symlink component {task_symlink}"
             )
             continue
-        v3_validate_task(project_root, task_dir, location, mode, errors)
+        v3_validate_task(project_root, task_dir, location, mode, errors, warnings)
 
     return errors
 
@@ -1987,11 +2017,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR project root does not exist: {project_root}")
         return 2
     mode = "full" if args.full else "focus"
-    errors = check_project_v3(project_root, mode)
+    warnings: list[str] = []
+    errors = check_project_v3(project_root, mode, warnings)
     if errors:
         print(f"Project memory check failed with {len(errors)} error(s):")
         for error in errors:
             print(f"ERROR {error}")
+    for warning in warnings:
+        print(f"WARNING {warning}")
+    if errors:
         return 1
     print(f"Project memory check passed ({mode})")
     return 0
