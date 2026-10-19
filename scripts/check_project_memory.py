@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import struct
 import subprocess
@@ -516,11 +517,14 @@ def validate_adaptive_html_surface(
 
 
 def run_git(project_root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+    # GIT_OPTIONAL_LOCKS=0 keeps read-only commands such as `git status` from
+    # refreshing (rewriting) the index.
     return subprocess.run(
         ["git", "-C", str(project_root), *args],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
     )
 
 
@@ -716,6 +720,11 @@ def v3_git_status(project_root: Path, *pathspecs: str) -> bytes | None:
     return result.stdout if result.returncode == 0 else None
 
 
+# Domain separator hashed first into every worktree:/patch: digest. Changing it
+# (or the digest algorithm below) invalidates every existing worktree subject.
+WORKTREE_DIGEST_DOMAIN = b"goalos-continuity-worktree-v1\0"
+
+
 def v3_worktree_digest(project_root: Path, subject_paths: list[str]) -> str | None:
     head = v3_git_head(project_root)
     if head is None:
@@ -727,7 +736,7 @@ def v3_worktree_digest(project_root: Path, subject_paths: list[str]) -> str | No
     if status is None or diff.returncode != 0:
         return None
     digest = hashlib.sha256()
-    digest.update(b"goalos-continuity-worktree-v1\0")
+    digest.update(WORKTREE_DIGEST_DOMAIN)
     digest.update(head.encode("ascii"))
     digest.update(b"\0")
     digest.update(status)
@@ -814,7 +823,8 @@ def v3_validate_subject(
         status = v3_git_status(project_root, *paths)
         if exists.returncode != 0 or diff.returncode != 0 or status is None or status:
             errors.append(
-                f"{label}: git subject is stale for its declared subject_paths"
+                f"{label}: git subject is stale for its declared subject_paths; "
+                "print a current one with `project_memory.py subject <project-root> git|worktree <path>...`"
             )
         return
     if value.startswith("worktree:") or value.startswith("patch:"):
@@ -838,7 +848,10 @@ def v3_validate_subject(
                 errors.append(f"{label}: subject path never identifies a regular file in the worktree or HEAD: {path}")
         actual = v3_worktree_digest(project_root, paths)
         if not SHA256_RE.fullmatch(expected) or actual != expected:
-            errors.append(f"{label}: worktree subject is stale")
+            errors.append(
+                f"{label}: worktree subject is stale; print a current one with "
+                "`project_memory.py subject <project-root> worktree <path>...` (any new commit changes it)"
+            )
         return
     if value.startswith("sha256:"):
         expected = value.split(":", 1)[1]

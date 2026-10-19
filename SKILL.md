@@ -57,7 +57,9 @@ Preserve pre-existing and source-unknown changes.
 
 The optional `scripts/project_memory.py init|check` dispatcher invokes these
 same implementations. Its `guide` and `template` commands only print existing
-resource files; they are not prerequisites for reading them.
+resource files; they are not prerequisites for reading them. Its read-only
+`subject <project-root> {git|worktree|sha256} <path>...` command prints the
+exact `subject` lines a handoff, review, or action record needs.
 
 Use default/`--focus` checks during work and `--full` for all current-protocol
 tasks, including archives, before completion or audit. `ERROR` lines fail the
