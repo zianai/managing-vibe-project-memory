@@ -5,6 +5,8 @@ for protocol 3.0. Rows describe what the code does; anything not listed is not
 checked mechanically. Unknown fields are allowed, nested data is allowed only
 inside a top-level `x_*` extension, and every record uses the flat YAML subset
 described in [continuity-kernel.md](continuity-kernel.md#flat-yaml-subset).
+Where the prose references say something different, see
+[Known Disagreements](#known-disagreements).
 
 ## Common Rules
 
@@ -217,3 +219,18 @@ and paste the output into the front matter.
 | `patch:<sha256>` | still accepted alias of `worktree:`; don't use it in new records | `subject <root> worktree <path>...`, then use `worktree:` | same as `worktree:` | same as `worktree:` |
 | `sha256:<hex>` | one artifact file (export, payload, render) | `subject <root> sha256 <path>` (prints `subject` and `subject_ref`) | SHA-256 of `subject_ref` matches | SHA-256 of `subject_ref` matches |
 | `provider:<identity>` / `artifact:<identity>` | an external revision (design tool, registry) | written by hand from the provider's immutable revision | identity at least 8 characters without `current`, `draft`, `head`, `latest`, `main`, `master`, `mutable` or `working`; `subject_paths` must be current regular files; visual subjects also need a revision and a frame/node/page/screen identity | same |
+
+## Known Disagreements
+
+This file describes what the checker currently does. In these places the prose
+references say something different; a later release will settle each one.
+
+1. Review `mode`: `continuity-kernel.md` and `parallel-harness.md` present `self_check`, `fresh_context`, `independent_actor`, `human` as the vocabulary; the checker accepts any value and only requires `independent_actor` at high-impact completion.
+2. Review `verdict`: the review template uses `changes_requested`; the checker only compares against `passed` (high-impact completion and visual conformance) and treats any other value as not passed.
+3. Visual fields: `visual-alignment.md` and `AGENTS.md` say a visual task always names `approved_baseline_subject`, `implementation_render_subject`, `baseline_decision_ref` and `conformance_status`; the checker requires them only for a conformance claim (`matched`, `differences_accepted`), and the `visual_alignment: reserved` gate on `visual_alignment_status` appears in no prose reference.
+4. Human Completion acceptance: `human-alignment.md` requires it for high-impact work, residual risk, material deviation, or reserved acceptance; the checker requires `completion_acceptance_ref` for every `risk: high` completion, even with only `local-reversible` as a reason.
+5. Action-record keys: `high-impact-actions.md` says `authorization_basis` becomes required only once execution or completion is claimed; the checker requires the keys `authorization_basis`, `authority_ref`, `idempotency_key`, `expires_at`, `timeout_seconds`, `observation` and `compensation` in every action record, even `planned`, and checks their values only in execution statuses.
+6. `authorization_basis` deny lists: the task-level list denies `okay` but accepts `ok` and `yes`, while action records deny all three; the prose references don't distinguish the two lists.
+7. `done` and acceptance: `continuity-kernel.md` says `done` requires satisfied acceptance; the checker cannot verify that and enforces only the completion consequences (review, `completion_acceptance_ref`, finished actions, no `unresolved_choices`).
+8. `handoff_subject_ref` is only path-checked and has no other effect, and `merge_resolution_subject_ref` is accepted as a reference but is an error once `integration_status` is `resolved` or `merged`; no prose reference mentions either field.
+9. Fields only this file documents: `completion_claim`, `implementation_started`, `unresolved_choices`, `material_deviation`, `residual_risk`, `human_completion_reserved`, `parallel_overlap_paths`, `merge_resolution_*`, the `effect_*` names and values, the forbidden `result_status` and review-owned task fields, and unknown `risk_reasons` values being accepted without a floor.

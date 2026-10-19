@@ -303,7 +303,7 @@ python3 scripts/check_project_memory.py [project_root] [mode]
 
 ### 统一入口与资源读取
 
-`project_memory.py` 的 `init` / `check` 调用上述同一实现，`template` / `guide` 只输出资源：
+`project_memory.py` 提供六个命令：`init` / `check` 调用上述同一实现，`subject` 打印主体行，`archive` 归档任务，`template` / `guide` 只输出资源：
 
 ```bash
 python3 "<skill-dir>/scripts/project_memory.py" init "<project-root>" --dry-run
@@ -320,7 +320,7 @@ python3 "<skill-dir>/scripts/project_memory.py" guide continuity-kernel
 
 模板名称：`agents`、`state`、`task`、`decisions`、`handoff`、`review`、`action`。规则名称见[协议索引](#protocol-reference)。模板保留待填写的占位符，不代表批准或执行成功；也可以直接打开[模板文件](references/continuity-kernel.md#record-templates)，不必运行命令。
 
-返回码：`0` 成功；`1` 项目检查未通过；`2` 参数、初始化或资源读取错误。各子命令支持 `--help`。
+返回码：`0` 成功；`1` 项目检查未通过，或 `subject git` 的路径有未提交改动；`2` 参数、初始化或资源读取错误，或 `subject` / `archive` 拒绝执行（错误信息写明原因，且不做任何修改）。各子命令支持 `--help`。
 
 ## 协议数据结构
 
@@ -371,6 +371,8 @@ updated: "2026-08-19"
 | `context_refs` | 恢复当前任务所需的本地上下文引用 |
 | `decision_refs` | 当前工作依赖的持久决策引用 |
 | `evidence_refs` | 需要长期保留、可复现的证据引用 |
+
+可选字段（如 `completion_acceptance_ref`、`action_refs`、`effect_*`、`conformance_status`）、每个字段允许的取值以及检查器的具体规则，见[字段参考](references/field-reference.md)。
 
 所有项目引用都必须相对于项目根目录、留在项目内部，并且不能通过符号链接穿越权威边界。协议允许项目添加扩展字段；只要它们不与核心字段冲突，验证器会安全忽略未知扩展。
 
@@ -506,7 +508,24 @@ python3 "$MEMORY_SKILL/scripts/check_project_memory.py" "$MEMORY_PROJECT"
 python3 "<skill-dir>/scripts/check_project_memory.py" "<project-root>" --full
 ```
 
-`--full` 适合 CI、审计、完成声明和归档，而不是每次小改动都必须执行的固定关卡。
+`--full` 适合 CI、审计、完成声明和归档，而不是每次小改动都必须执行的固定关卡。归档任务时按[归档已完成的任务](#归档已完成的任务)操作，不要手工移动目录。
+
+### 归档已完成的任务
+
+任务完成、取消或被取代后，用 `archive` 把它移出工作集。它只是移动，不要求 `status: done`，也不代替完整检查：
+
+```bash
+python3 "<skill-dir>/scripts/project_memory.py" archive "<project-root>" T-001-initial --dry-run
+python3 "<skill-dir>/scripts/project_memory.py" archive "<project-root>" T-001-initial
+python3 "<skill-dir>/scripts/project_memory.py" check "<project-root>" --full
+git -C "<project-root>" add work project
+git -C "<project-root>" commit -m "Archive T-001-initial"
+```
+
+1. 先用 `--dry-run` 查看 `MOVE`、`REWRITE` 和 `STATE` 计划，此时不会改动任何文件；
+2. 再执行归档：任务目录移到 `work/archive/`，指向它的路径被改写，若 `active_task` 指向该任务则改为 `null`；
+3. 运行 `check --full`，确认归档后的记录仍然一致；
+4. 自己检查并提交改动。`archive` 从不暂存或提交；任务目录或待改写文件有未提交改动时，它会拒绝执行。
 
 ### 并行执行环境：Git 原生协作
 
@@ -538,6 +557,7 @@ managing-vibe-project-memory/
 │   ├── init_project_memory.py       # 安全初始化器
 │   ├── check_project_memory.py      # 只读一致性检查器
 │   ├── flat_yaml.py                 # 两个脚本共用的扁平 YAML 子集解析器
+│   ├── memory_tools.py              # subject 与 archive 命令
 │   └── project_memory.py            # 命令转发与资源输出
 ├── tests/                           # 标准库 unittest 回归测试
 └── .github/workflows/tests.yml      # CI：Ubuntu / macOS × Python 3.10 / 3.13
@@ -574,7 +594,7 @@ git diff --check
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
 ```
 
-`tests/test_v3_kernel.py` 覆盖协议 3.0 内核行为，`tests/test_review_findings.py` 覆盖评审发现的回归。CI（`.github/workflows/tests.yml`）在 Ubuntu 与 macOS、Python 3.10 与 3.13 上运行同一命令。
+`tests/test_v3_kernel.py` 覆盖协议 3.0 内核行为，`tests/test_review_findings.py` 覆盖评审发现的回归，`tests/test_reference_and_archive.py` 覆盖字段参考的完整性以及 `subject`、`archive` 命令。CI（`.github/workflows/tests.yml`）在 Ubuntu 与 macOS、Python 3.10 与 3.13 上运行同一命令。
 
 冒烟检查不能代替行为回归。修改脚本需验证正常与拒绝路径；修改指令需验证新会话恢复、风险判断和记录维护的实际表现。记录环境、结果与未覆盖范围，测试项目留在独立目录。
 
