@@ -448,10 +448,18 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def first_symlink_component(path: Path) -> Path | None:
-    absolute = path.absolute()
-    cursor = Path(absolute.anchor)
-    for part in absolute.parts[1:]:
+def first_symlink_component(project_root: Path, path: Path) -> Path | None:
+    """Return the first symlink at or below the resolved project root on the way to path.
+
+    Symlinks above the root (macOS /tmp, a symlinked home) are the user's
+    environment, not project authority, so they are not inspected.
+    """
+    try:
+        relative = path.relative_to(project_root)
+    except ValueError:
+        return path
+    cursor = project_root
+    for part in relative.parts:
         cursor = cursor / part
         if cursor.is_symlink():
             return cursor
@@ -675,11 +683,11 @@ def v3_project_relative_path(
         return None
     target = project_root / candidate
     try:
-        target.resolve(strict=False).relative_to(project_root.resolve())
+        target.resolve(strict=False).relative_to(project_root)
     except ValueError:
         errors.append(f"{label}: path resolves outside the project root")
         return None
-    symlink = first_symlink_component(target)
+    symlink = first_symlink_component(project_root, target)
     if symlink is not None:
         errors.append(f"{label}: authority path traverses symlink component {symlink}")
         return None
@@ -1818,16 +1826,11 @@ def check_project_v3(
     errors: list[str] = []
     if warnings is None:
         warnings = []
-    selected_root = project_root.absolute()
-    selected_symlink = first_symlink_component(selected_root)
-    project_root = selected_root.resolve()
-    if selected_symlink is not None:
-        errors.append(
-            f"selected project root traverses symlink component {selected_symlink}; authority paths must not be redirected"
-        )
+    # Resolve the selected root once; symlink protection covers the project, not its ancestors.
+    project_root = project_root.absolute().resolve()
     for relative in ("AGENTS.md", "project/state.yaml"):
         path = project_root / relative
-        symlink = first_symlink_component(path)
+        symlink = first_symlink_component(project_root, path)
         if symlink is not None:
             errors.append(
                 f"{relative}: project authority path traverses symlink component {symlink}"
@@ -1836,7 +1839,7 @@ def check_project_v3(
             errors.append(f"missing regular project authority file: {relative}")
 
     state_path = project_root / "project" / "state.yaml"
-    if first_symlink_component(state_path) is not None or not state_path.is_file():
+    if first_symlink_component(project_root, state_path) is not None or not state_path.is_file():
         return errors
     project_authority = project_root / "project"
     if project_authority.is_dir():
@@ -1880,10 +1883,10 @@ def check_project_v3(
 
     selected: list[tuple[str, tuple[Path, str]]] = []
     work_root = project_root / "work"
-    work_symlink = first_symlink_component(work_root)
+    work_symlink = first_symlink_component(project_root, work_root)
     if work_symlink is not None:
         errors.append(f"work: task authority root traverses symlink component {work_symlink}")
-    active_root_symlink = first_symlink_component(work_root / "active")
+    active_root_symlink = first_symlink_component(project_root, work_root / "active")
     if work_symlink is None and active_root_symlink is not None:
         errors.append(
             f"work/active: task authority root traverses symlink component {active_root_symlink}"
@@ -1892,7 +1895,7 @@ def check_project_v3(
         task_locations: dict[str, tuple[Path, str]] = {}
         for location in ("active", "archive"):
             root = work_root / location
-            root_symlink = first_symlink_component(root)
+            root_symlink = first_symlink_component(project_root, root)
             if root_symlink is not None:
                 errors.append(f"work/{location}: task authority root traverses symlink component {root_symlink}")
                 continue
@@ -1915,7 +1918,7 @@ def check_project_v3(
         selected = list(task_locations.items())
     elif focus_id:
         focus_dir = work_root / "active" / focus_id
-        focus_symlink = first_symlink_component(focus_dir)
+        focus_symlink = first_symlink_component(project_root, focus_dir)
         if focus_symlink is not None:
             errors.append(
                 f"work/active/{focus_id}: recovery-focus authority traverses symlink component {focus_symlink}"
@@ -1927,7 +1930,7 @@ def check_project_v3(
 
     for _, (task_dir, location) in selected:
         task_path = task_dir / "task.yaml"
-        task_symlink = first_symlink_component(task_path)
+        task_symlink = first_symlink_component(project_root, task_path)
         if task_symlink is not None:
             errors.append(
                 f"{task_path.relative_to(project_root)}: task authority path traverses symlink component {task_symlink}"

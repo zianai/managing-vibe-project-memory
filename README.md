@@ -250,7 +250,7 @@ python3 "<skill-dir>/scripts/init_project_memory.py" "<project-root>" \
   --project-name "Project Name"
 ```
 
-初始化器不会覆盖已有路径。如果现有状态不兼容、根 `AGENTS.md` 需要人工合并、目标路径受保护或路径通过符号链接改变权威位置，它会在写入前停止。
+初始化器不会覆盖已有路径。如果现有状态不兼容、根 `AGENTS.md` 需要人工合并、目标路径受保护或项目内的路径通过符号链接改变权威位置，它会在写入前停止。项目根目录会先解析为真实路径：根目录本身或其上级目录是符号链接（如 macOS 的 `/tmp`）是允许的，保护只覆盖根目录及其以下的权威路径。
 
 ### 4. 验证恢复焦点
 
@@ -545,7 +545,6 @@ managing-vibe-project-memory/
 
 ```bash
 MEMORY_DEMO="$(mktemp -d)"
-MEMORY_DEMO="$(cd "$MEMORY_DEMO" && pwd -P)"
 
 python3 -B scripts/init_project_memory.py --help
 python3 -B scripts/check_project_memory.py --help
@@ -557,7 +556,7 @@ python3 -B scripts/project_memory.py check "$MEMORY_DEMO/demo" --full
 git diff --check
 ```
 
-预期：预览不写入，首次创建三个文件，重复初始化跳过已有文件，草稿通过检查。`pwd -P` 避免系统临时目录的符号链接触发保护。
+预期：预览不写入，首次创建三个文件，重复初始化跳过已有文件，草稿通过检查。
 
 冒烟检查不能代替行为回归。修改脚本需验证正常与拒绝路径；修改指令需验证新会话恢复、风险判断和记录维护的实际表现。记录环境、结果与未覆盖范围，测试项目留在独立目录。
 

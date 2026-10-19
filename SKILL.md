@@ -51,7 +51,8 @@ placeholders with the real goal, scope, non-goals, acceptance, and risk.
 Optional adapters and milestones require explicit flags.
 
 Initialization never overwrites existing files. Stop for incompatible state,
-a root contract requiring manual merge, protected paths, or symlink redirection.
+a root contract requiring manual merge, protected paths, or symlink redirection
+at or below the resolved project root (symlinked ancestors are fine).
 Preserve pre-existing and source-unknown changes.
 
 The optional `scripts/project_memory.py init|check` dispatcher invokes these

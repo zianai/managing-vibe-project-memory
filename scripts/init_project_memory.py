@@ -134,10 +134,18 @@ def render_template(content: str, values: dict[str, str]) -> str:
     return content
 
 
-def first_symlink_component(path: Path) -> Path | None:
-    absolute = path.absolute()
-    cursor = Path(absolute.anchor)
-    for part in absolute.parts[1:]:
+def first_symlink_component(project_root: Path, path: Path) -> Path | None:
+    """Return the first symlink at or below the resolved project root on the way to path.
+
+    Symlinks above the root (macOS /tmp, a symlinked home) are the user's
+    environment, not project authority, so they are not inspected.
+    """
+    try:
+        relative = path.relative_to(project_root)
+    except ValueError:
+        return path
+    cursor = project_root
+    for part in relative.parts:
         cursor = cursor / part
         if cursor.is_symlink():
             return cursor
@@ -155,13 +163,12 @@ def first_non_directory_ancestor(path: Path) -> Path | None:
 
 
 def unsafe_target_reason(project_root: Path, relative: Path) -> str | None:
-    symlink = first_symlink_component(project_root / relative)
+    symlink = first_symlink_component(project_root, project_root / relative)
     if symlink is not None:
         return f"target path contains symlink component: {symlink}"
-    canonical_root = project_root.resolve(strict=False)
     resolved_target = (project_root / relative).resolve(strict=False)
     try:
-        resolved_target.relative_to(canonical_root)
+        resolved_target.relative_to(project_root)
     except ValueError:
         return f"target resolves outside selected project root: {relative}"
     cursor = project_root
@@ -172,14 +179,24 @@ def unsafe_target_reason(project_root: Path, relative: Path) -> str | None:
     return None
 
 
-def secure_exclusive_write(target: Path, payload: bytes, created_dirs: list[Path]) -> None:
-    """Create one file through no-follow directory descriptors, never overwriting."""
+def secure_exclusive_write(
+    project_root: Path, target: Path, payload: bytes, created_dirs: list[Path]
+) -> None:
+    """Create one file through no-follow directory descriptors, never overwriting.
+
+    The walk starts at the resolved project root (or its nearest existing
+    ancestor, before the root is created); only components below that are
+    opened with O_NOFOLLOW, so a symlinked ancestor of the root is allowed.
+    """
     absolute = target.absolute()
+    base = project_root
+    while not base.exists() and base != base.parent:
+        base = base.parent
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    directory_fd = os.open(absolute.anchor, directory_flags)
-    cursor = Path(absolute.anchor)
+    directory_fd = os.open(base, directory_flags)
+    cursor = base
     try:
-        for part in absolute.parent.parts[1:]:
+        for part in absolute.parent.relative_to(base).parts:
             next_path = cursor / part
             try:
                 child_fd = os.open(part, directory_flags, dir_fd=directory_fd)
@@ -257,14 +274,9 @@ def initialize(
     if ".." in project_root.parts:
         print("ERROR selected project root must not contain '..' path traversal", file=sys.stderr)
         return 2
-    project_root = project_root.absolute()
-    root_symlink = first_symlink_component(project_root)
-    if root_symlink is not None:
-        print(
-            f"ERROR unsafe selected project root: path contains symlink component: {root_symlink}",
-            file=sys.stderr,
-        )
-        return 2
+    # Resolve the selected root once and work from the resolved path; symlinks
+    # above it belong to the user's environment.
+    project_root = project_root.absolute().resolve()
     if project_root.exists() and not project_root.is_dir():
         print(f"ERROR selected project root is not a directory: {project_root}", file=sys.stderr)
         return 2
@@ -384,7 +396,7 @@ def initialize(
         rendered = render_template(content, values)
         rendered_bytes = rendered.encode("utf-8")
         try:
-            secure_exclusive_write(target, rendered_bytes, created_dirs)
+            secure_exclusive_write(project_root, target, rendered_bytes, created_dirs)
             created_files.append((target, rendered_bytes))
         except FileExistsError:
             return fail_after_writes(
