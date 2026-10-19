@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 import argparse
-import ast
 import hashlib
 import json
 import re
@@ -14,6 +13,8 @@ from datetime import datetime, time
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
+
+from flat_yaml import load_flat_yaml, parse_flat_yaml_text, unquoted_integer_hint
 
 
 CONTINUITY_KERNEL_PROTOCOL = "3.0"
@@ -313,104 +314,6 @@ def substantive_section_body(text: str) -> bool:
     return not low_information_repetition(cleaned)
 
 
-def parse_scalar(raw: str) -> Any:
-    value = raw.strip()
-    lowered = value.lower()
-    if lowered in {"null", "~", ""}:
-        return None
-    if lowered == "true":
-        return True
-    if lowered == "false":
-        return False
-    if value.startswith("[") and value.endswith("]"):
-        body = value[1:-1].strip()
-        if not body:
-            return []
-        return [parse_scalar(part) for part in body.split(",")]
-    if (value.startswith('"') and value.endswith('"')) or (
-        value.startswith("'") and value.endswith("'")
-    ):
-        try:
-            return ast.literal_eval(value)
-        except (SyntaxError, ValueError):
-            return value[1:-1]
-    if re.fullmatch(r"-?\d+", value):
-        return int(value)
-    return value
-
-
-def parse_flat_yaml_text(content: str) -> dict[str, Any]:
-    data: dict[str, Any] = {}
-    current_list: str | None = None
-    for line_number, raw_line in enumerate(content.splitlines(), 1):
-        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
-            continue
-        if raw_line.startswith("  - ") and current_list:
-            data[current_list].append(parse_scalar(raw_line[4:]))
-            continue
-        if raw_line[:1].isspace():
-            raise ValueError(f"unsupported nested YAML at line {line_number}")
-        if ":" not in raw_line:
-            raise ValueError(f"expected key: value at line {line_number}")
-        key, raw_value = raw_line.split(":", 1)
-        key = key.strip()
-        if not key:
-            raise ValueError(f"empty key at line {line_number}")
-        if key in data:
-            raise ValueError(f"duplicate key '{key}' at line {line_number}")
-        if not raw_value.strip():
-            data[key] = []
-            current_list = key
-        else:
-            data[key] = parse_scalar(raw_value)
-            current_list = None
-    return data
-
-
-def load_flat_yaml(path: Path) -> dict[str, Any]:
-    return parse_flat_yaml_text(path.read_text(encoding="utf-8"))
-
-
-def parse_v3_yaml_text(content: str) -> dict[str, Any]:
-    """Parse the flat portable core while ignoring nested top-level x_* extensions."""
-    data: dict[str, Any] = {}
-    current_list: str | None = None
-    ignored_extension: str | None = None
-    for line_number, raw_line in enumerate(content.splitlines(), 1):
-        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
-            continue
-        if raw_line[:1].isspace():
-            if ignored_extension is not None:
-                continue
-            if raw_line.startswith("  - ") and current_list:
-                data[current_list].append(parse_scalar(raw_line[4:]))
-                continue
-            raise ValueError(f"unsupported nested YAML at line {line_number}; use a top-level x_* extension or a referenced native file")
-        ignored_extension = None
-        current_list = None
-        if ":" not in raw_line:
-            raise ValueError(f"expected key: value at line {line_number}")
-        key, raw_value = raw_line.split(":", 1)
-        key = key.strip()
-        if not key:
-            raise ValueError(f"empty key at line {line_number}")
-        if key in data:
-            raise ValueError(f"duplicate key '{key}' at line {line_number}")
-        if not raw_value.strip() and key.startswith("x_"):
-            data[key] = "<nested-extension>"
-            ignored_extension = key
-        elif not raw_value.strip():
-            data[key] = []
-            current_list = key
-        else:
-            data[key] = parse_scalar(raw_value)
-    return data
-
-
-def load_v3_yaml(path: Path) -> dict[str, Any]:
-    return parse_v3_yaml_text(path.read_text(encoding="utf-8"))
-
-
 def as_list(value: Any) -> list[Any]:
     if value is None:
         return []
@@ -426,6 +329,22 @@ def risk_factor_floor(factor: str) -> str | None:
 
 def highest_risk(levels: list[str]) -> str:
     return max(levels, key=lambda value: RISK_LEVEL_RANK[value]) if levels else "low"
+
+
+# Prose signals are advisory: each names the risk_reasons entry that would
+# declare the effect if it is real.
+PROSE_SIGNAL_RISK_REASONS = {
+    "destructive customer-data deletion": "irreversible-or-destructive",
+    "production key invalidation": "security-or-safety",
+    "customer notification": "payment-or-message",
+    "production deployment or public release": "publication-or-deployment",
+    "real customer payment": "payment-or-message",
+    "personal or sensitive data transfer": "real-user-or-sensitive-data",
+    "irreversible migration": "difficult-migration",
+    "security or safety control change": "security-or-safety",
+    "direct real-user state change": "real-user-or-sensitive-data",
+    "binding legal action": "legal-impact",
+}
 
 
 def goal_high_risk_signals(goal: Any) -> list[str]:
@@ -529,10 +448,18 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def first_symlink_component(path: Path) -> Path | None:
-    absolute = path.absolute()
-    cursor = Path(absolute.anchor)
-    for part in absolute.parts[1:]:
+def first_symlink_component(project_root: Path, path: Path) -> Path | None:
+    """Return the first symlink at or below the resolved project root on the way to path.
+
+    Symlinks above the root (macOS /tmp, a symlinked home) are the user's
+    environment, not project authority, so they are not inspected.
+    """
+    try:
+        relative = path.relative_to(project_root)
+    except ValueError:
+        return path
+    cursor = project_root
+    for part in relative.parts:
         cursor = cursor / part
         if cursor.is_symlink():
             return cursor
@@ -756,11 +683,11 @@ def v3_project_relative_path(
         return None
     target = project_root / candidate
     try:
-        target.resolve(strict=False).relative_to(project_root.resolve())
+        target.resolve(strict=False).relative_to(project_root)
     except ValueError:
         errors.append(f"{label}: path resolves outside the project root")
         return None
-    symlink = first_symlink_component(target)
+    symlink = first_symlink_component(project_root, target)
     if symlink is not None:
         errors.append(f"{label}: authority path traverses symlink component {symlink}")
         return None
@@ -840,7 +767,14 @@ def v3_validate_subject(
     *,
     artifact: Path | None = None,
     subject_paths: list[str] | None = None,
+    historical: bool = False,
 ) -> None:
+    """Validate a claim subject.
+
+    A historical (archived) claim is not compared with today's worktree: a git
+    subject must name an existing commit, and worktree/patch digests cannot be
+    recomputed, so only their shape is checked. Artifact digests still verify.
+    """
     value = str(subject or "").strip().lower()
     if not value:
         errors.append(f"{label}: exact subject is required")
@@ -864,6 +798,10 @@ def v3_validate_subject(
         if not paths:
             errors.append(f"{label}: git subject requires explicit subject_paths")
             return
+        if historical:
+            if not GIT_COMMIT_RE.fullmatch(expected) or exists.returncode != 0:
+                errors.append(f"{label}: archived git subject does not name an existing commit")
+            return
         for path, target in path_targets:
             in_subject = run_git(project_root, "cat-file", "-t", f"{expected}:{path}")
             subject_is_file = in_subject.returncode == 0 and in_subject.stdout.strip() == b"blob"
@@ -881,6 +819,10 @@ def v3_validate_subject(
         return
     if value.startswith("worktree:") or value.startswith("patch:"):
         expected = value.split(":", 1)[1]
+        if historical:
+            if not SHA256_RE.fullmatch(expected):
+                errors.append(f"{label}: archived worktree subject must be a 64-character hex digest")
+            return
         head = v3_git_head(project_root)
         for path, target in path_targets:
             in_head = (
@@ -938,7 +880,7 @@ def v3_load_claim_record(path: Path, kind: str) -> dict[str, Any]:
     if path.suffix.lower() not in {".md", ".yaml", ".yml"}:
         raise ValueError(f"{kind} record must be YAML or Markdown with YAML front matter")
     if path.suffix.lower() in {".yaml", ".yml"}:
-        return load_v3_yaml(path)
+        return load_flat_yaml(path)
     content = path.read_text(encoding="utf-8")
     lines = content.splitlines()
     if not lines or lines[0].strip() != "---":
@@ -947,7 +889,7 @@ def v3_load_claim_record(path: Path, kind: str) -> dict[str, Any]:
         end = next(index for index, line in enumerate(lines[1:], 1) if line.strip() == "---")
     except StopIteration as exc:
         raise ValueError(f"current {kind} record has unclosed YAML front matter") from exc
-    return parse_v3_yaml_text("\n".join(lines[1:end]))
+    return parse_flat_yaml_text("\n".join(lines[1:end]))
 
 
 def v3_validate_claim_file(path: Path, label: str, errors: list[str]) -> None:
@@ -1118,6 +1060,8 @@ def v3_validate_action_record(
     project_root: Path,
     path: Path,
     errors: list[str],
+    *,
+    historical: bool = False,
 ) -> None:
     label = str(path.relative_to(project_root))
     try:
@@ -1178,6 +1122,7 @@ def v3_validate_action_record(
             errors,
             artifact=subject_ref,
             subject_paths=[str(value) for value in as_list(record.get("subject_paths"))],
+            historical=historical,
         )
     authority_ref = None
     if record.get("authority_ref"):
@@ -1249,8 +1194,11 @@ def v3_validate_task(
     location: str,
     mode: str,
     errors: list[str],
+    warnings: list[str],
 ) -> str | None:
     relative = task_dir.relative_to(project_root)
+    # Freshness applies to current claims; archived claims are history.
+    historical = location == "archive"
     if task_dir.is_symlink():
         errors.append(f"{relative}: task authority directory must not be a symlink")
         return None
@@ -1271,7 +1219,7 @@ def v3_validate_task(
         errors.append(f"{relative}: missing regular task.yaml")
         return None
     try:
-        task = load_v3_yaml(task_file)
+        task = load_flat_yaml(task_file)
     except (OSError, ValueError) as exc:
         errors.append(f"{relative}/task.yaml: {exc}")
         return None
@@ -1283,7 +1231,11 @@ def v3_validate_task(
     if task_id != task_dir.name:
         errors.append(f"{relative}/task.yaml: id '{task_id}' does not match directory name")
     if task.get("schema_version") != 3:
-        errors.append(f"{relative}/task.yaml: schema_version must be 3")
+        errors.append(
+            f"{relative}/task.yaml: unsupported schema_version {task.get('schema_version')!r}; "
+            "protocol 3.0 requires schema_version: 3"
+            + unquoted_integer_hint("schema_version", task.get("schema_version"), 3)
+        )
     if str(task.get("protocol_version") or "") != CONTINUITY_KERNEL_PROTOCOL:
         errors.append(f'{relative}/task.yaml: protocol_version must be "3.0"')
 
@@ -1345,9 +1297,15 @@ def v3_validate_task(
         high_impact = True
     if as_list(task.get("action_refs")):
         high_impact = True
-    prose_risk_signals = goal_high_risk_signals(task.get("goal")) + goal_high_risk_signals(task.get("scope"))
-    if prose_risk_signals:
-        high_impact = True
+    if risk != "high":
+        prose_risk_signals = dict.fromkeys(
+            goal_high_risk_signals(task.get("goal")) + goal_high_risk_signals(task.get("scope"))
+        )
+        for signal in prose_risk_signals:
+            warnings.append(
+                f"{relative}/task.yaml: goal/scope mentions {signal}; if the effect is real, "
+                f"set risk: high or add risk_reasons entry '{PROSE_SIGNAL_RISK_REASONS[signal]}'"
+            )
     if high_impact and risk in RISK_LEVEL_RANK and risk != "high":
         errors.append(f"{relative}/task.yaml: risk is below the activated high-impact floor")
 
@@ -1464,6 +1422,7 @@ def v3_validate_task(
                     f"{relative}/task.yaml:handoff_ref:subject", errors,
                     artifact=handoff_subject_ref,
                     subject_paths=[str(value) for value in as_list(handoff_record.get("subject_paths"))],
+                    historical=historical,
                 )
                 for field, value in handoff_record.items():
                     if not field.startswith("x_") and field.endswith("_ref") and field not in {"task_ref", "subject_ref"} and value:
@@ -1514,6 +1473,7 @@ def v3_validate_task(
                     f"{relative}/task.yaml:review_ref:subject", errors,
                     artifact=review_subject_ref,
                     subject_paths=[str(value) for value in as_list(review_record.get("subject_paths"))],
+                    historical=historical,
                 )
                 if completion_claim and high_impact:
                     if str(review_record.get("verdict") or "") != "passed":
@@ -1546,12 +1506,12 @@ def v3_validate_task(
         or not task.get("implementation_render_subject")
     ):
         errors.append(
-            f"{relative}/task.yaml: conformance claim requires stable approved-baseline and implementation-render subjects"
+            f"{relative}/task.yaml: conformance claim requires stable approved-baseline and implementation-render subjects (approved_baseline_subject, implementation_render_subject)"
         )
     if conformance in {"matched", "differences_accepted"}:
         if optional_paths.get("baseline_decision_ref") is None:
             errors.append(
-                f"{relative}/task.yaml: approved-baseline conformance requires an explicit human decision reference"
+                f"{relative}/task.yaml: approved-baseline conformance requires an explicit human decision reference in baseline_decision_ref"
             )
         else:
             v3_validate_decision_file(
@@ -1651,7 +1611,7 @@ def v3_validate_task(
         if conformance == "differences_accepted":
             if optional_paths.get("difference_decision_ref") is None:
                 errors.append(
-                    f"{relative}/task.yaml: accepted visual differences require an exact human decision record"
+                    f"{relative}/task.yaml: accepted visual differences require an exact human decision record in difference_decision_ref"
                 )
             else:
                 v3_validate_decision_file(
@@ -1665,7 +1625,7 @@ def v3_validate_task(
     ):
         if str(task.get("visual_alignment_status") or "") not in {"accepted", "delegated"}:
             errors.append(
-                f"{relative}/task.yaml: reserved human visual preference is unresolved"
+                f"{relative}/task.yaml: reserved human visual preference is unresolved; visual_alignment_status must be accepted or delegated"
             )
 
     action_records: list[tuple[Path, dict[str, Any]]] = []
@@ -1678,7 +1638,7 @@ def v3_validate_task(
             errors,
         )
         if action_path is not None:
-            v3_validate_action_record(project_root, action_path, errors)
+            v3_validate_action_record(project_root, action_path, errors, historical=historical)
             try:
                 action_records.append((action_path, v3_load_action_record(action_path)))
             except (OSError, ValueError):
@@ -1739,7 +1699,7 @@ def v3_validate_task(
             for state in states
         ):
             errors.append(
-                f"{relative}/task.yaml: unknown outcome for idempotency key '{key}' requires reconciliation before retry"
+                f"{relative}/task.yaml: unknown outcome for idempotency key '{key}' requires reconciliation before retry; record reconciliation_result and reconciliation_ref"
             )
         effect_rows = sum(state in V3_ACTION_EFFECT_STATUSES for state in states)
         if effect_rows > 1:
@@ -1788,7 +1748,7 @@ def v3_validate_task(
                 or review_subject.startswith("patch:")
             ):
                 errors.append(
-                    f"{relative}/task.yaml: high-impact action review requires a scoped git/worktree subject"
+                    f"{relative}/task.yaml: high-impact action review requires a scoped git/worktree review subject"
                 )
 
     overlap_paths = [str(value).strip() for value in as_list(task.get("parallel_overlap_paths")) if str(value).strip()]
@@ -1826,6 +1786,7 @@ def v3_validate_task(
             project_root, merge_subject,
             f"{relative}/task.yaml:merge_resolution_subject", errors,
             subject_paths=merge_paths,
+            historical=historical,
         )
     if completion_claim:
         if high_impact and not action_records and external_effects != "none":
@@ -1845,7 +1806,8 @@ def v3_validate_task(
         )
         if acceptance_required and optional_paths.get("completion_acceptance_ref") is None:
             errors.append(
-                f"{relative}/task.yaml: risk or deviation requires exact Human Completion acceptance before done"
+                f"{relative}/task.yaml: risk or deviation requires exact Human Completion acceptance before done; "
+                "set completion_acceptance_ref to the human acceptance record"
             )
         elif acceptance_required:
             v3_validate_claim_file(
@@ -1856,18 +1818,19 @@ def v3_validate_task(
     return task_id or None
 
 
-def check_project_v3(project_root: Path, mode: str = "focus") -> list[str]:
+def check_project_v3(
+    project_root: Path,
+    mode: str = "focus",
+    warnings: list[str] | None = None,
+) -> list[str]:
     errors: list[str] = []
-    selected_root = project_root.absolute()
-    selected_symlink = first_symlink_component(selected_root)
-    project_root = selected_root.resolve()
-    if selected_symlink is not None:
-        errors.append(
-            f"selected project root traverses symlink component {selected_symlink}; authority paths must not be redirected"
-        )
+    if warnings is None:
+        warnings = []
+    # Resolve the selected root once; symlink protection covers the project, not its ancestors.
+    project_root = project_root.absolute().resolve()
     for relative in ("AGENTS.md", "project/state.yaml"):
         path = project_root / relative
-        symlink = first_symlink_component(path)
+        symlink = first_symlink_component(project_root, path)
         if symlink is not None:
             errors.append(
                 f"{relative}: project authority path traverses symlink component {symlink}"
@@ -1876,7 +1839,7 @@ def check_project_v3(project_root: Path, mode: str = "focus") -> list[str]:
             errors.append(f"missing regular project authority file: {relative}")
 
     state_path = project_root / "project" / "state.yaml"
-    if first_symlink_component(state_path) is not None or not state_path.is_file():
+    if first_symlink_component(project_root, state_path) is not None or not state_path.is_file():
         return errors
     project_authority = project_root / "project"
     if project_authority.is_dir():
@@ -1891,7 +1854,7 @@ def check_project_v3(project_root: Path, mode: str = "focus") -> list[str]:
                     f"{descendant.relative_to(project_root)}: project authority descendant must not be a symlink"
                 )
     try:
-        state = load_v3_yaml(state_path)
+        state = load_flat_yaml(state_path)
     except (OSError, ValueError) as exc:
         errors.append(f"project/state.yaml: {exc}")
         return errors
@@ -1899,7 +1862,10 @@ def check_project_v3(project_root: Path, mode: str = "focus") -> list[str]:
         if key not in state:
             errors.append(f"project/state.yaml: missing required field '{key}'")
     if state.get("schema_version") != 3:
-        errors.append("project/state.yaml: unsupported schema; this distribution requires schema_version: 3")
+        errors.append(
+            "project/state.yaml: unsupported schema; this distribution requires schema_version: 3"
+            + unquoted_integer_hint("schema_version", state.get("schema_version"), 3)
+        )
     if str(state.get("protocol_version") or "") != CONTINUITY_KERNEL_PROTOCOL:
         errors.append('project/state.yaml: unsupported protocol; this distribution requires protocol_version: "3.0"')
 
@@ -1917,10 +1883,10 @@ def check_project_v3(project_root: Path, mode: str = "focus") -> list[str]:
 
     selected: list[tuple[str, tuple[Path, str]]] = []
     work_root = project_root / "work"
-    work_symlink = first_symlink_component(work_root)
+    work_symlink = first_symlink_component(project_root, work_root)
     if work_symlink is not None:
         errors.append(f"work: task authority root traverses symlink component {work_symlink}")
-    active_root_symlink = first_symlink_component(work_root / "active")
+    active_root_symlink = first_symlink_component(project_root, work_root / "active")
     if work_symlink is None and active_root_symlink is not None:
         errors.append(
             f"work/active: task authority root traverses symlink component {active_root_symlink}"
@@ -1929,7 +1895,7 @@ def check_project_v3(project_root: Path, mode: str = "focus") -> list[str]:
         task_locations: dict[str, tuple[Path, str]] = {}
         for location in ("active", "archive"):
             root = work_root / location
-            root_symlink = first_symlink_component(root)
+            root_symlink = first_symlink_component(project_root, root)
             if root_symlink is not None:
                 errors.append(f"work/{location}: task authority root traverses symlink component {root_symlink}")
                 continue
@@ -1952,7 +1918,7 @@ def check_project_v3(project_root: Path, mode: str = "focus") -> list[str]:
         selected = list(task_locations.items())
     elif focus_id:
         focus_dir = work_root / "active" / focus_id
-        focus_symlink = first_symlink_component(focus_dir)
+        focus_symlink = first_symlink_component(project_root, focus_dir)
         if focus_symlink is not None:
             errors.append(
                 f"work/active/{focus_id}: recovery-focus authority traverses symlink component {focus_symlink}"
@@ -1964,13 +1930,13 @@ def check_project_v3(project_root: Path, mode: str = "focus") -> list[str]:
 
     for _, (task_dir, location) in selected:
         task_path = task_dir / "task.yaml"
-        task_symlink = first_symlink_component(task_path)
+        task_symlink = first_symlink_component(project_root, task_path)
         if task_symlink is not None:
             errors.append(
                 f"{task_path.relative_to(project_root)}: task authority path traverses symlink component {task_symlink}"
             )
             continue
-        v3_validate_task(project_root, task_dir, location, mode, errors)
+        v3_validate_task(project_root, task_dir, location, mode, errors, warnings)
 
     return errors
 
@@ -1987,11 +1953,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR project root does not exist: {project_root}")
         return 2
     mode = "full" if args.full else "focus"
-    errors = check_project_v3(project_root, mode)
+    warnings: list[str] = []
+    errors = check_project_v3(project_root, mode, warnings)
     if errors:
         print(f"Project memory check failed with {len(errors)} error(s):")
         for error in errors:
             print(f"ERROR {error}")
+    for warning in warnings:
+        print(f"WARNING {warning}")
+    if errors:
         return 1
     print(f"Project memory check passed ({mode})")
     return 0

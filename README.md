@@ -250,7 +250,7 @@ python3 "<skill-dir>/scripts/init_project_memory.py" "<project-root>" \
   --project-name "Project Name"
 ```
 
-初始化器不会覆盖已有路径。如果现有状态不兼容、根 `AGENTS.md` 需要人工合并、目标路径受保护或路径通过符号链接改变权威位置，它会在写入前停止。
+初始化器不会覆盖已有路径。如果现有状态不兼容、根 `AGENTS.md` 需要人工合并、目标路径受保护或项目内的路径通过符号链接改变权威位置，它会在写入前停止。项目根目录会先解析为真实路径：根目录本身或其上级目录是符号链接（如 macOS 的 `/tmp`）是允许的，保护只覆盖根目录及其以下的权威路径。
 
 ### 4. 验证恢复焦点
 
@@ -293,9 +293,13 @@ python3 scripts/check_project_memory.py [project_root] [mode]
 | 默认 / `--focus` | 日常工作、恢复上下文 | 状态、当前任务、引用、保护路径、当前声明与已激活覆盖层 |
 | `--full` | 完成、归档、CI、审计 | 所有受管理的活动与归档记录，以及完成声明一致性 |
 
+新鲜度只约束当前声明：归档任务（`work/archive/`）中的 `git:` 主体只需指向存在的 commit，不与当前工作区比较；`worktree:` / `patch:` 摘要无法事后重算，只检查格式；`sha256:` 工件摘要仍会校验。
+
 `--focus` 与 `--full` 互斥，省略项目路径时使用当前目录。选中的记录必须声明 schema 3 / protocol 3.0；检查只读，不改写记录。
 
 验证器检查结构、引用、状态与声明一致性，但不会判断审美质量、文字质量、Agent 拓扑或实现方案是否聪明。
+
+输出中 `ERROR` 使检查失败；`WARNING` 列在错误之后，仅作提示，只有警告时返回码仍为 `0`。若 `goal` / `scope` 文字提到通知用户、发布、支付等高影响效果，检查器只给出警告：效果属实时，请提高 `risk` 或补充对应的 `risk_reasons`；风险下限只由声明的 `risk_reasons`、`effect_*`、`external_effects` 和 `action_refs` 决定。
 
 ### 统一入口与资源读取
 
@@ -522,10 +526,13 @@ managing-vibe-project-memory/
 │   ├── visual-alignment.md          # 视觉基线、实现渲染与一致性
 │   ├── high-impact-actions.md       # 外部操作、幂等与对账
 │   └── parallel-harness.md          # 多执行环境的 Git 原生协作
-└── scripts/
-    ├── init_project_memory.py       # 安全初始化器
-    ├── check_project_memory.py      # 只读一致性检查器
-    └── project_memory.py            # 命令转发与资源输出
+├── scripts/
+│   ├── init_project_memory.py       # 安全初始化器
+│   ├── check_project_memory.py      # 只读一致性检查器
+│   ├── flat_yaml.py                 # 两个脚本共用的扁平 YAML 子集解析器
+│   └── project_memory.py            # 命令转发与资源输出
+├── tests/                           # 标准库 unittest 回归测试
+└── .github/workflows/tests.yml      # CI：Ubuntu / macOS × Python 3.10 / 3.13
 ```
 
 技能目录保存方法，目标项目保存记忆。规则和模板可以直接读取；初始化器与资源输出共用同一份模板，避免维护副本。
@@ -540,7 +547,6 @@ managing-vibe-project-memory/
 
 ```bash
 MEMORY_DEMO="$(mktemp -d)"
-MEMORY_DEMO="$(cd "$MEMORY_DEMO" && pwd -P)"
 
 python3 -B scripts/init_project_memory.py --help
 python3 -B scripts/check_project_memory.py --help
@@ -552,7 +558,15 @@ python3 -B scripts/project_memory.py check "$MEMORY_DEMO/demo" --full
 git diff --check
 ```
 
-预期：预览不写入，首次创建三个文件，重复初始化跳过已有文件，草稿通过检查。`pwd -P` 避免系统临时目录的符号链接触发保护。
+预期：预览不写入，首次创建三个文件，重复初始化跳过已有文件，草稿通过检查。
+
+回归测试只用标准库，需要 Python 3.10+ 和 Git：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
+```
+
+`tests/test_v3_kernel.py` 覆盖协议 3.0 内核行为，`tests/test_review_findings.py` 覆盖评审发现的回归。CI（`.github/workflows/tests.yml`）在 Ubuntu 与 macOS、Python 3.10 与 3.13 上运行同一命令。
 
 冒烟检查不能代替行为回归。修改脚本需验证正常与拒绝路径；修改指令需验证新会话恢复、风险判断和记录维护的实际表现。记录环境、结果与未覆盖范围，测试项目留在独立目录。
 

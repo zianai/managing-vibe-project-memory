@@ -11,6 +11,8 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from flat_yaml import load_flat_yaml, unquoted_integer_hint
+
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_ROOT = SKILL_ROOT / "assets" / "project-template"
@@ -22,60 +24,6 @@ PLACEHOLDER_RE = re.compile(
     r"\{\{[^}]+\}\}|\b(?:TODO|TBD|FIXME)\b|\bREPLACE[_ -]?(?:ME|THIS|THE|WITH)\b",
     re.IGNORECASE,
 )
-
-
-def read_portable_scalars(path: Path) -> dict[str, object]:
-    data: dict[str, object] = {}
-    current_list: str | None = None
-    ignored_extension = False
-    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
-            continue
-        if raw_line[:1].isspace():
-            if ignored_extension:
-                continue
-            if raw_line.startswith("  - ") and current_list:
-                item = raw_line[4:].strip().strip('"').strip("'")
-                value = data.get(current_list)
-                if isinstance(value, list):
-                    value.append(item)
-                continue
-            raise ValueError(
-                f"unsupported nested core YAML at line {line_number}; use a top-level x_* extension"
-            )
-        current_list = None
-        ignored_extension = False
-        if ":" not in raw_line:
-            raise ValueError(f"expected key: value at line {line_number}")
-        key, value = raw_line.split(":", 1)
-        key = key.strip()
-        if key in data:
-            raise ValueError(f"duplicate key '{key}' at line {line_number}")
-        raw_value = value.strip()
-        if not raw_value and key.startswith("x_"):
-            data[key] = "<nested-extension>"
-            ignored_extension = True
-            continue
-        if not raw_value:
-            data[key] = []
-            current_list = key
-            continue
-        scalar = raw_value.strip('"').strip("'")
-        if raw_value.startswith("[") and raw_value.endswith("]"):
-            inner = raw_value[1:-1].strip()
-            parsed = [] if not inner else [
-                item.strip().strip('"').strip("'") for item in inner.split(",")
-            ]
-        elif scalar == "null":
-            parsed: object = None
-        elif scalar in {"true", "false"}:
-            parsed = scalar == "true"
-        elif scalar.isdigit():
-            parsed = int(scalar)
-        else:
-            parsed = scalar
-        data[key] = parsed
-    return data
 
 
 def protected_path_covers_output(protected: str, output: Path) -> bool:
@@ -96,12 +44,15 @@ def incompatible_existing_authority(
         if not path.exists():
             continue
         try:
-            record = read_portable_scalars(path)
+            record = load_flat_yaml(path)
             raw = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError, ValueError) as exc:
             return f"existing {kind} authority is unreadable or malformed: {path.relative_to(project_root)}: {exc}"
         if record.get("schema_version") != 3 or str(record.get("protocol_version") or "") != "3.0":
-            return f"existing {kind} authority is incompatible with protocol 3.0: {path.relative_to(project_root)}"
+            return (
+                f"existing {kind} authority is incompatible with protocol 3.0: {path.relative_to(project_root)}"
+                + unquoted_integer_hint("schema_version", record.get("schema_version"), 3)
+            )
         required = (
             ("project_id", "project_name", "status", "active_task", "updated")
             if kind == "state"
@@ -183,10 +134,18 @@ def render_template(content: str, values: dict[str, str]) -> str:
     return content
 
 
-def first_symlink_component(path: Path) -> Path | None:
-    absolute = path.absolute()
-    cursor = Path(absolute.anchor)
-    for part in absolute.parts[1:]:
+def first_symlink_component(project_root: Path, path: Path) -> Path | None:
+    """Return the first symlink at or below the resolved project root on the way to path.
+
+    Symlinks above the root (macOS /tmp, a symlinked home) are the user's
+    environment, not project authority, so they are not inspected.
+    """
+    try:
+        relative = path.relative_to(project_root)
+    except ValueError:
+        return path
+    cursor = project_root
+    for part in relative.parts:
         cursor = cursor / part
         if cursor.is_symlink():
             return cursor
@@ -204,13 +163,12 @@ def first_non_directory_ancestor(path: Path) -> Path | None:
 
 
 def unsafe_target_reason(project_root: Path, relative: Path) -> str | None:
-    symlink = first_symlink_component(project_root / relative)
+    symlink = first_symlink_component(project_root, project_root / relative)
     if symlink is not None:
         return f"target path contains symlink component: {symlink}"
-    canonical_root = project_root.resolve(strict=False)
     resolved_target = (project_root / relative).resolve(strict=False)
     try:
-        resolved_target.relative_to(canonical_root)
+        resolved_target.relative_to(project_root)
     except ValueError:
         return f"target resolves outside selected project root: {relative}"
     cursor = project_root
@@ -221,14 +179,24 @@ def unsafe_target_reason(project_root: Path, relative: Path) -> str | None:
     return None
 
 
-def secure_exclusive_write(target: Path, payload: bytes, created_dirs: list[Path]) -> None:
-    """Create one file through no-follow directory descriptors, never overwriting."""
+def secure_exclusive_write(
+    project_root: Path, target: Path, payload: bytes, created_dirs: list[Path]
+) -> None:
+    """Create one file through no-follow directory descriptors, never overwriting.
+
+    The walk starts at the resolved project root (or its nearest existing
+    ancestor, before the root is created); only components below that are
+    opened with O_NOFOLLOW, so a symlinked ancestor of the root is allowed.
+    """
     absolute = target.absolute()
+    base = project_root
+    while not base.exists() and base != base.parent:
+        base = base.parent
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    directory_fd = os.open(absolute.anchor, directory_flags)
-    cursor = Path(absolute.anchor)
+    directory_fd = os.open(base, directory_flags)
+    cursor = base
     try:
-        for part in absolute.parent.parts[1:]:
+        for part in absolute.parent.relative_to(base).parts:
             next_path = cursor / part
             try:
                 child_fd = os.open(part, directory_flags, dir_fd=directory_fd)
@@ -306,14 +274,9 @@ def initialize(
     if ".." in project_root.parts:
         print("ERROR selected project root must not contain '..' path traversal", file=sys.stderr)
         return 2
-    project_root = project_root.absolute()
-    root_symlink = first_symlink_component(project_root)
-    if root_symlink is not None:
-        print(
-            f"ERROR unsafe selected project root: path contains symlink component: {root_symlink}",
-            file=sys.stderr,
-        )
-        return 2
+    # Resolve the selected root once and work from the resolved path; symlinks
+    # above it belong to the user's environment.
+    project_root = project_root.absolute().resolve()
     if project_root.exists() and not project_root.is_dir():
         print(f"ERROR selected project root is not a directory: {project_root}", file=sys.stderr)
         return 2
@@ -433,7 +396,7 @@ def initialize(
         rendered = render_template(content, values)
         rendered_bytes = rendered.encode("utf-8")
         try:
-            secure_exclusive_write(target, rendered_bytes, created_dirs)
+            secure_exclusive_write(project_root, target, rendered_bytes, created_dirs)
             created_files.append((target, rendered_bytes))
         except FileExistsError:
             return fail_after_writes(

@@ -51,7 +51,8 @@ placeholders with the real goal, scope, non-goals, acceptance, and risk.
 Optional adapters and milestones require explicit flags.
 
 Initialization never overwrites existing files. Stop for incompatible state,
-a root contract requiring manual merge, protected paths, or symlink redirection.
+a root contract requiring manual merge, protected paths, or symlink redirection
+at or below the resolved project root (symlinked ancestors are fine).
 Preserve pre-existing and source-unknown changes.
 
 The optional `scripts/project_memory.py init|check` dispatcher invokes these
@@ -59,7 +60,10 @@ same implementations. Its `guide` and `template` commands only print existing
 resource files; they are not prerequisites for reading them.
 
 Use default/`--focus` checks during work and `--full` for all current-protocol
-tasks, including archives, before completion or audit.
+tasks, including archives, before completion or audit. `ERROR` lines fail the
+check; `WARNING` lines are advisory and keep exit code `0`. A warning that the
+goal or scope mentions a consequential effect asks you to judge it: if the
+effect is real, raise `risk` or add the matching `risk_reasons` entry.
 
 ## Load The Relevant Detail
 

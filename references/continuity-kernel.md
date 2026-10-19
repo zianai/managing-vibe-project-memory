@@ -92,6 +92,17 @@ Status is descriptive recovery metadata. Protocol 3.0 does not impose one fixed 
 
 Unknown extension fields are allowed and ignored safely unless they contradict a core field or activate a declared overlay.
 
+### Flat YAML Subset
+
+State, task, handoff, review, and action records share one flat YAML subset (`scripts/flat_yaml.py`):
+
+- Top-level `key: value` scalars and flow lists such as `[src/, "notes/a, b.md"]`; commas split items only outside quotes.
+- Block lists directly under an empty `key:` line, with `- item` at column 0 or indented.
+- `#` comments outside quotes, at line start or after whitespace (`risk: low  # local only`). A `#` with no space before it is part of the value, so `notes.md#section` keeps its fragment.
+- Nested data only inside a top-level `x_*` extension, which the checker skips.
+
+Nested mappings, block scalars (`|`, `>`), and duplicate keys are rejected with a message. `schema_version` is the unquoted integer `3`; `schema_version: "3"` is rejected with a hint to write `schema_version: 3`.
+
 ## Event-Triggered Artifacts
 
 ### Decisions
@@ -118,6 +129,8 @@ Create durable evidence only when later reproduction, audit, visual comparison, 
 
 - Default/focus mode validates state, recovery-focus task, refs, protected-path consistency, subject freshness, activated overlays, and contradictions between status and results.
 - `--full` validates all managed active/archived records and completion/audit consistency.
+- Freshness applies to current claims. For tasks under `work/archive/`, subjects are history and are not compared with today's worktree: a `git:` subject must name a commit that exists (the worktree need not match it or be clean); a `worktree:`/`patch:` digest cannot be recomputed after the fact, so only its 64-hex shape is checked; a `sha256:` subject is still verified against its artifact. This covers review, handoff, merge-resolution, and action-record subjects. Active tasks keep the full freshness rules.
+- `ERROR` lines fail the check (exit `1`). `WARNING` lines follow the errors and are advisory; a check with only warnings exits `0`. Prose signals in `goal`/`scope` produce warnings only; declared `risk_reasons`, `effect_*`, `external_effects`, and `action_refs` set the risk floor.
 
 Both modes require schema 3 / protocol 3.0 for every selected record. Other
 declared versions are rejected without modifying them.
@@ -143,7 +156,7 @@ approval or a successful check.
 
 ## Always-Hard Rules
 
-- Resolve project and focus task without symlink redirection.
+- Resolve the selected project root once to its real path (a symlinked root or ancestor is the user's environment and is allowed), then resolve the focus task and every authority path below it without symlink redirection.
 - Treat pre-existing/source-unknown modified or untracked work as owned; never silently reset, clean, stash, overwrite, stage, or commit it.
 - Preserve `protected_paths` exactly.
 - Never transform agent-relayed prose into human authorization.
