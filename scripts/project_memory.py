@@ -47,8 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Protocol 3.0 project memory. Use COMMAND --help for options."
     )
     parser.add_argument(
-        "command", choices=("init", "check", "subject", "template", "guide"),
-        help="Initialize, validate, print a claim subject, print a template, or print a reference.",
+        "command", choices=("init", "check", "subject", "archive", "template", "guide"),
+        help=(
+            "Initialize, validate, print a claim subject, archive a task, "
+            "print a template, or print a reference."
+        ),
     )
     return parser
 
@@ -57,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     command = build_parser().parse_args(arguments[:1]).command
     remaining = arguments[1:]
-    if command in {"init", "check", "subject"}:
+    if command in {"init", "check", "subject", "archive"}:
         # These are the actual implementations, not copies or legacy-protocol paths.
         # Do not leave module caches in a user's skill installation during CLI use.
         sys.dont_write_bytecode = True
@@ -69,6 +72,10 @@ def main(argv: list[str] | None = None) -> int:
             from memory_tools import subject_main
 
             return subject_main(remaining)
+        if command == "archive":
+            from memory_tools import archive_main
+
+            return archive_main(remaining)
         from check_project_memory import main as check_main
 
         return check_main(remaining)

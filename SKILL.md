@@ -61,6 +61,10 @@ resource files; they are not prerequisites for reading them. Its read-only
 `subject <project-root> {git|worktree|sha256} <path>...` command prints the
 exact `subject` lines a handoff, review, or action record needs.
 
+Archive a finished or abandoned task with `project_memory.py archive
+<project-root> <task-id>` (try `--dry-run` first), never a hand move; then run
+`--full` and commit.
+
 Use default/`--focus` checks during work and `--full` for all current-protocol
 tasks, including archives, before completion or audit. `ERROR` lines fail the
 check; `WARNING` lines are advisory and keep exit code `0`. A warning that the

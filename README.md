@@ -309,11 +309,14 @@ python3 scripts/check_project_memory.py [project_root] [mode]
 python3 "<skill-dir>/scripts/project_memory.py" init "<project-root>" --dry-run
 python3 "<skill-dir>/scripts/project_memory.py" check "<project-root>" --full
 python3 "<skill-dir>/scripts/project_memory.py" subject "<project-root>" git src/app.py
+python3 "<skill-dir>/scripts/project_memory.py" archive "<project-root>" T-001-initial --dry-run
 python3 "<skill-dir>/scripts/project_memory.py" template handoff
 python3 "<skill-dir>/scripts/project_memory.py" guide continuity-kernel
 ```
 
 `subject <project-root> {git|worktree|sha256} <path>...` 只读地打印可粘贴到交接、评审或操作记录 front matter 的主体行：已提交的路径用 `git`，未提交的改动用 `worktree`（摘要包含 `HEAD`，任何新提交都会使其过期），单个工件文件用 `sha256`。路径有未提交改动时 `git` 返回 `1` 并建议改用 `worktree`；越界、符号链接、缺失文件或没有 Git 仓库时返回 `2`。详见[字段参考](references/field-reference.md#subjects)。
+
+`archive <project-root> <task-id> [--dry-run]` 把 `work/active/<id>` 移到 `work/archive/<id>`，并在被移动的任务、其他活动任务和 `project/` 的 `.yaml` / `.yml` / `.md` 文件中改写指向它的路径；若 `active_task` 指向该任务，则改为 `null`。它从不暂存或提交；遇到未提交改动、符号链接、目标已存在或任务不存在时返回 `2` 且不做任何修改，中途失败会完整回滚。之后运行 `check --full` 并提交。详见[归档](references/continuity-kernel.md#archiving)。
 
 模板名称：`agents`、`state`、`task`、`decisions`、`handoff`、`review`、`action`。规则名称见[协议索引](#protocol-reference)。模板保留待填写的占位符，不代表批准或执行成功；也可以直接打开[模板文件](references/continuity-kernel.md#record-templates)，不必运行命令。
 

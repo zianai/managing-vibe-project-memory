@@ -2,18 +2,23 @@
 """Protocol 3.0 maintenance commands behind `project_memory.py`.
 
 `subject` prints claim subjects using the checker's own digest code, so a
-subject it prints is exactly what the checker recomputes.
+subject it prints is exactly what the checker recomputes. `archive` moves a task
+to work/archive/ and rewrites the paths that point into it, with rollback.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
+from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 from check_project_memory import (
+    V3_TASK_NAME_RE,
     first_symlink_component,
     run_git,
     sha256,
@@ -21,6 +26,7 @@ from check_project_memory import (
     v3_git_status,
     v3_worktree_digest,
 )
+from flat_yaml import load_flat_yaml
 
 
 EXIT_OK = 0
@@ -154,4 +160,239 @@ def subject_main(argv: list[str]) -> int:
         print(f"ERROR cannot read subject paths: {exc}", file=sys.stderr)
         return EXIT_REFUSED
     print("\n".join(lines))
+    return EXIT_OK
+
+
+# ---------------------------------------------------------------------------
+# archive
+# ---------------------------------------------------------------------------
+
+REWRITE_SUFFIXES = {".yaml", ".yml", ".md"}
+
+
+@dataclass
+class Rewrite:
+    final: Path  # where the file lives after the move
+    original: bytes
+    updated: bytes
+
+
+@dataclass
+class ArchivePlan:
+    source: Path
+    destination: Path
+    rewrites: list[Rewrite] = field(default_factory=list)
+    clears_focus: bool = False
+    warnings: list[str] = field(default_factory=list)
+
+
+def active_path_pattern(task_id: str) -> re.Pattern[bytes]:
+    """work/active/<id> not followed by an id character, so T-001-x never matches T-001-x-v2."""
+    return re.compile(re.escape(f"work/active/{task_id}".encode()) + rb"(?![A-Za-z0-9._-])")
+
+
+def files_below(project_root: Path, folder: Path) -> list[Path]:
+    """Every file below folder; refuse if any entry is a symlink."""
+
+    def unreadable(error: OSError) -> None:
+        raise Refusal(f"cannot inspect {error.filename}: {error.strerror}")
+
+    found: list[Path] = []
+    for directory, dirnames, filenames in os.walk(folder, onerror=unreadable):
+        for name in sorted(dirnames + filenames):
+            path = Path(directory) / name
+            if path.is_symlink():
+                raise Refusal(f"symlink in the archive scope: {path.relative_to(project_root)}")
+        found.extend(Path(directory) / name for name in sorted(filenames))
+    return found
+
+
+def git_dirty(project_root: Path, paths: list[str]) -> bool:
+    status = v3_git_status(project_root, *paths)
+    if status is None:
+        raise Refusal("cannot read git status")
+    return bool(status)
+
+
+def plan_archive(project_root: Path, task_id: str) -> ArchivePlan:
+    if not V3_TASK_NAME_RE.fullmatch(task_id):
+        raise Refusal(f"invalid task id: {task_id}")
+    active_root = project_root / "work" / "active"
+    archive_root = project_root / "work" / "archive"
+    source = active_root / task_id
+    destination = archive_root / task_id
+    for path in (source, destination):
+        symlink = first_symlink_component(project_root, path)
+        if symlink is not None:
+            raise Refusal(f"symlink in the archive path: {symlink.relative_to(project_root)}")
+    if not source.is_dir():
+        raise Refusal(f"task {task_id} not found: work/active/{task_id} is not a folder")
+    if destination.exists():
+        raise Refusal(f"work/archive/{task_id} already exists")
+    if archive_root.exists() and not archive_root.is_dir():
+        raise Refusal("work/archive exists but is not a folder")
+
+    plan = ArchivePlan(source=source, destination=destination)
+    moved_files = files_below(project_root, source)
+    other_files: list[Path] = []
+    for child in sorted(active_root.iterdir()):
+        if child == source:
+            continue
+        if child.is_symlink():
+            raise Refusal(f"symlink in the archive scope: {child.relative_to(project_root)}")
+        other_files.extend(files_below(project_root, child) if child.is_dir() else [child])
+    project_dir = project_root / "project"
+    if project_dir.is_symlink():
+        raise Refusal("symlink in the archive scope: project")
+    if project_dir.is_dir():
+        other_files.extend(files_below(project_root, project_dir))
+
+    pattern = active_path_pattern(task_id)
+    new_prefix = f"work/archive/{task_id}".encode()
+    pending: dict[Path, tuple[Path, bytes, bytes]] = {}
+    for path in moved_files + other_files:
+        if path.suffix.lower() not in REWRITE_SUFFIXES:
+            continue
+        original = path.read_bytes()
+        updated = pattern.sub(new_prefix, original)
+        if updated != original:
+            final = destination / path.relative_to(source) if path.is_relative_to(source) else path
+            pending[path] = (final, original, updated)
+
+    state_path = project_dir / "state.yaml"
+    if state_path.is_file():
+        try:
+            state = load_flat_yaml(state_path)
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            raise Refusal(f"cannot read project/state.yaml: {exc}") from None
+        if str(state.get("active_task") or "").strip() == task_id:
+            plan.clears_focus = True
+            final, original, updated = pending.get(
+                state_path, (state_path, state_path.read_bytes(), state_path.read_bytes())
+            )
+            updated = re.sub(rb"(?m)^active_task:[^\r\n]*", b"active_task: null", updated)
+            today = date.today().isoformat().encode()
+            updated = re.sub(rb"(?m)^updated:[^\r\n]*", b'updated: "' + today + b'"', updated)
+            pending[state_path] = (final, original, updated)
+
+    inside = run_git(project_root, "rev-parse", "--is-inside-work-tree")
+    if inside.returncode == 0 and inside.stdout.strip() == b"true":
+        if git_dirty(project_root, [f"work/active/{task_id}"]):
+            raise Refusal(
+                f"work/active/{task_id}/ has uncommitted or untracked changes; commit them first"
+            )
+        others = [
+            path.relative_to(project_root).as_posix()
+            for path in pending
+            if not path.is_relative_to(source)
+        ]
+        if others and git_dirty(project_root, others):
+            raise Refusal(
+                "files that archive would rewrite have uncommitted changes; commit them first: "
+                + ", ".join(others)
+            )
+
+    plan.rewrites = [Rewrite(final, original, updated) for final, original, updated in pending.values()]
+    if archive_root.is_dir():
+        for directory, _, filenames in os.walk(archive_root):
+            for name in sorted(filenames):
+                path = Path(directory) / name
+                if path.suffix.lower() in REWRITE_SUFFIXES and not path.is_symlink():
+                    try:
+                        mentions = pattern.search(path.read_bytes()) is not None
+                    except OSError:
+                        continue
+                    if mentions:
+                        plan.warnings.append(
+                            f"{path.relative_to(project_root)} mentions work/active/{task_id}; "
+                            "archived history is left unchanged"
+                        )
+    return plan
+
+
+def overwrite(path: Path, payload: bytes) -> None:
+    flags = os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    with os.fdopen(descriptor, "wb", closefd=True) as handle:
+        handle.write(payload)
+
+
+def apply_archive(plan: ArchivePlan) -> None:
+    """Move, then rewrite; on any failure restore every byte and move back."""
+    archive_root = plan.destination.parent
+    created_archive_root = False
+    moved = False
+    written: list[Rewrite] = []
+    try:
+        if not archive_root.exists():
+            os.mkdir(archive_root, 0o755)
+            created_archive_root = True
+        os.rename(plan.source, plan.destination)
+        moved = True
+        for rewrite in plan.rewrites:
+            written.append(rewrite)
+            overwrite(rewrite.final, rewrite.updated)
+    except BaseException:
+        for rewrite in reversed(written):
+            try:
+                overwrite(rewrite.final, rewrite.original)
+            except OSError:
+                pass
+        if moved:
+            try:
+                os.rename(plan.destination, plan.source)
+            except OSError:
+                pass
+        if created_archive_root:
+            try:
+                os.rmdir(archive_root)
+            except OSError:
+                pass
+        raise
+
+
+def archive_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="project_memory.py archive",
+        description=(
+            "Move work/active/<task-id> to work/archive/<task-id> and rewrite the paths "
+            "that point into it. Never stages or commits."
+        ),
+    )
+    parser.add_argument("project_root")
+    parser.add_argument("task_id")
+    parser.add_argument("--dry-run", action="store_true", help="Print the plan without changing files.")
+    args = parser.parse_args(argv)
+    try:
+        project_root = resolve_project_root(args.project_root)
+        plan = plan_archive(project_root, args.task_id)
+    except Refusal as exc:
+        print(f"ERROR {exc}; nothing changed", file=sys.stderr)
+        return EXIT_REFUSED
+    except OSError as exc:
+        print(f"ERROR cannot plan the archive: {exc}; nothing changed", file=sys.stderr)
+        return EXIT_REFUSED
+
+    def relative(path: Path) -> str:
+        return path.relative_to(project_root).as_posix()
+
+    print(f"MOVE {relative(plan.source)} -> {relative(plan.destination)}")
+    for rewrite in plan.rewrites:
+        print(f"REWRITE {relative(rewrite.final)}")
+    if plan.clears_focus:
+        print("STATE active_task -> null")
+    for warning in plan.warnings:
+        print(f"WARNING {warning}")
+    if args.dry_run:
+        print("Dry run: nothing changed")
+        return EXIT_OK
+    try:
+        apply_archive(plan)
+    except OSError as exc:
+        print(f"ERROR archive failed and was rolled back: {exc}", file=sys.stderr)
+        return EXIT_REFUSED
+    print(
+        f"Archived {args.task_id}. Next: run `project_memory.py check {project_root} --full`, "
+        "then commit the move (archive never stages or commits)."
+    )
     return EXIT_OK
