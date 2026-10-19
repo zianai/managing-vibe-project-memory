@@ -118,6 +118,7 @@ Create durable evidence only when later reproduction, audit, visual comparison, 
 
 - Default/focus mode validates state, recovery-focus task, refs, protected-path consistency, subject freshness, activated overlays, and contradictions between status and results.
 - `--full` validates all managed active/archived records and completion/audit consistency.
+- Freshness applies to current claims. For tasks under `work/archive/`, subjects are history and are not compared with today's worktree: a `git:` subject must name a commit that exists (the worktree need not match it or be clean); a `worktree:`/`patch:` digest cannot be recomputed after the fact, so only its 64-hex shape is checked; a `sha256:` subject is still verified against its artifact. This covers review, handoff, merge-resolution, and action-record subjects. Active tasks keep the full freshness rules.
 - `ERROR` lines fail the check (exit `1`). `WARNING` lines follow the errors and are advisory; a check with only warnings exits `0`. Prose signals in `goal`/`scope` produce warnings only; declared `risk_reasons`, `effect_*`, `external_effects`, and `action_refs` set the risk floor.
 
 Both modes require schema 3 / protocol 3.0 for every selected record. Other

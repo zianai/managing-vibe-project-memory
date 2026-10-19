@@ -856,7 +856,14 @@ def v3_validate_subject(
     *,
     artifact: Path | None = None,
     subject_paths: list[str] | None = None,
+    historical: bool = False,
 ) -> None:
+    """Validate a claim subject.
+
+    A historical (archived) claim is not compared with today's worktree: a git
+    subject must name an existing commit, and worktree/patch digests cannot be
+    recomputed, so only their shape is checked. Artifact digests still verify.
+    """
     value = str(subject or "").strip().lower()
     if not value:
         errors.append(f"{label}: exact subject is required")
@@ -880,6 +887,10 @@ def v3_validate_subject(
         if not paths:
             errors.append(f"{label}: git subject requires explicit subject_paths")
             return
+        if historical:
+            if not GIT_COMMIT_RE.fullmatch(expected) or exists.returncode != 0:
+                errors.append(f"{label}: archived git subject does not name an existing commit")
+            return
         for path, target in path_targets:
             in_subject = run_git(project_root, "cat-file", "-t", f"{expected}:{path}")
             subject_is_file = in_subject.returncode == 0 and in_subject.stdout.strip() == b"blob"
@@ -897,6 +908,10 @@ def v3_validate_subject(
         return
     if value.startswith("worktree:") or value.startswith("patch:"):
         expected = value.split(":", 1)[1]
+        if historical:
+            if not SHA256_RE.fullmatch(expected):
+                errors.append(f"{label}: archived worktree subject must be a 64-character hex digest")
+            return
         head = v3_git_head(project_root)
         for path, target in path_targets:
             in_head = (
@@ -1134,6 +1149,8 @@ def v3_validate_action_record(
     project_root: Path,
     path: Path,
     errors: list[str],
+    *,
+    historical: bool = False,
 ) -> None:
     label = str(path.relative_to(project_root))
     try:
@@ -1194,6 +1211,7 @@ def v3_validate_action_record(
             errors,
             artifact=subject_ref,
             subject_paths=[str(value) for value in as_list(record.get("subject_paths"))],
+            historical=historical,
         )
     authority_ref = None
     if record.get("authority_ref"):
@@ -1268,6 +1286,8 @@ def v3_validate_task(
     warnings: list[str],
 ) -> str | None:
     relative = task_dir.relative_to(project_root)
+    # Freshness applies to current claims; archived claims are history.
+    historical = location == "archive"
     if task_dir.is_symlink():
         errors.append(f"{relative}: task authority directory must not be a symlink")
         return None
@@ -1487,6 +1507,7 @@ def v3_validate_task(
                     f"{relative}/task.yaml:handoff_ref:subject", errors,
                     artifact=handoff_subject_ref,
                     subject_paths=[str(value) for value in as_list(handoff_record.get("subject_paths"))],
+                    historical=historical,
                 )
                 for field, value in handoff_record.items():
                     if not field.startswith("x_") and field.endswith("_ref") and field not in {"task_ref", "subject_ref"} and value:
@@ -1537,6 +1558,7 @@ def v3_validate_task(
                     f"{relative}/task.yaml:review_ref:subject", errors,
                     artifact=review_subject_ref,
                     subject_paths=[str(value) for value in as_list(review_record.get("subject_paths"))],
+                    historical=historical,
                 )
                 if completion_claim and high_impact:
                     if str(review_record.get("verdict") or "") != "passed":
@@ -1701,7 +1723,7 @@ def v3_validate_task(
             errors,
         )
         if action_path is not None:
-            v3_validate_action_record(project_root, action_path, errors)
+            v3_validate_action_record(project_root, action_path, errors, historical=historical)
             try:
                 action_records.append((action_path, v3_load_action_record(action_path)))
             except (OSError, ValueError):
@@ -1849,6 +1871,7 @@ def v3_validate_task(
             project_root, merge_subject,
             f"{relative}/task.yaml:merge_resolution_subject", errors,
             subject_paths=merge_paths,
+            historical=historical,
         )
     if completion_claim:
         if high_impact and not action_records and external_effects != "none":
