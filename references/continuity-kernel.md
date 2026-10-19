@@ -82,6 +82,9 @@ evidence_refs: []
 updated: "2026-08-19"
 ```
 
+Every field and value the checker enforces, for this task schema and every
+other record, is listed in [field-reference.md](field-reference.md).
+
 References are project-root-relative, remain inside the project, and must not
 traverse symlinks. An external mutable link may appear only as context inside a
 local referenced note; it is not authority. `scope` is a semantic boundary, not
@@ -136,6 +139,25 @@ Both modes require schema 3 / protocol 3.0 for every selected record. Other
 declared versions are rejected without modifying them.
 
 Mechanical validation must not judge aesthetics, prose quality, agent topology, or implementation wisdom. It must not require fixed Markdown headings, minimum prose length, a singleton active task, static builder/verifier inequality, universal readout packages, or a fixed number/format of visual gates.
+
+### Archiving
+
+Archive a task when it no longer belongs in the working set: it is done, cancelled, or superseded. Archiving is a move, not a completion check; it does not require `status: done`. Use the command rather than moving the folder by hand, because a plain move leaves every `work/active/<id>` reference dangling:
+
+```bash
+python3 <skill-dir>/scripts/project_memory.py archive <project-root> <task-id> --dry-run
+python3 <skill-dir>/scripts/project_memory.py archive <project-root> <task-id>
+```
+
+- It moves `work/active/<id>/` to `work/archive/<id>/` with one rename, creating `work/archive/` if needed.
+- It rewrites `work/active/<id>` to `work/archive/<id>` in `.yaml`, `.yml`, and `.md` files in the moved folder, the other `work/active/` tasks, and `project/`. A longer id such as `<id>-v2` is never matched.
+- Other archived tasks are history and are never edited; a `WARNING` names any that still mention the old path.
+- If `project/state.yaml` has `active_task: <id>`, it becomes `active_task: null` with today's `updated`; any other focus is kept.
+- It prints `MOVE`, `REWRITE`, and `STATE` lines; `--dry-run` prints the same plan and changes nothing.
+- It refuses (exit `2`, nothing changed) an invalid or missing task, an existing `work/archive/<id>`, any symlink in the paths it would move or rewrite, and, in a Git repository, uncommitted or untracked changes in the task folder or in files it would rewrite. Commit those first.
+- It never stages or commits, and rolls everything back if a step fails.
+
+Afterwards run `check --full` and commit the move. The archived task's claims are then checked as history (see above).
 
 ## Record Templates
 

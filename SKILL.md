@@ -57,7 +57,13 @@ Preserve pre-existing and source-unknown changes.
 
 The optional `scripts/project_memory.py init|check` dispatcher invokes these
 same implementations. Its `guide` and `template` commands only print existing
-resource files; they are not prerequisites for reading them.
+resource files; they are not prerequisites for reading them. Its read-only
+`subject <project-root> {git|worktree|sha256} <path>...` command prints the
+exact `subject` lines a handoff, review, or action record needs.
+
+Archive a finished or abandoned task with `project_memory.py archive
+<project-root> <task-id>` (try `--dry-run` first), never a hand move; then run
+`--full` and commit.
 
 Use default/`--focus` checks during work and `--full` for all current-protocol
 tasks, including archives, before completion or audit. `ERROR` lines fail the
@@ -69,6 +75,8 @@ effect is real, raise `risk` or add the matching `risk_reasons` entry.
 
 - Read [continuity-kernel.md](references/continuity-kernel.md) when creating or
   updating records: schemas, field ownership, subjects, and claim freshness.
+- Read [field-reference.md](references/field-reference.md) for the exact fields,
+  allowed values, and checker rules of every record, and how to produce subjects.
 - Read [human-alignment.md](references/human-alignment.md) when a human-owned
   decision, material scope/risk change, or reserved acceptance matters.
 - Read [visual-alignment.md](references/visual-alignment.md) when visual
