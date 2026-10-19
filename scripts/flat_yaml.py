@@ -133,7 +133,7 @@ def parse_flat_yaml_text(content: str) -> dict[str, Any]:
             continue
         if indented:
             raise ValueError(
-                f"unsupported nested YAML at line {line_number}; "
+                f"unsupported nested core YAML at line {line_number}; "
                 "use a top-level x_* extension or a referenced native file"
             )
         if is_item:

@@ -1506,7 +1506,7 @@ def v3_validate_task(
         or not task.get("implementation_render_subject")
     ):
         errors.append(
-            f"{relative}/task.yaml: conformance claim requires stable approved_baseline_subject and implementation_render_subject"
+            f"{relative}/task.yaml: conformance claim requires stable approved-baseline and implementation-render subjects (approved_baseline_subject, implementation_render_subject)"
         )
     if conformance in {"matched", "differences_accepted"}:
         if optional_paths.get("baseline_decision_ref") is None:
@@ -1699,7 +1699,7 @@ def v3_validate_task(
             for state in states
         ):
             errors.append(
-                f"{relative}/task.yaml: unknown outcome for idempotency key '{key}' requires reconciliation (reconciliation_result and reconciliation_ref) before retry"
+                f"{relative}/task.yaml: unknown outcome for idempotency key '{key}' requires reconciliation before retry; record reconciliation_result and reconciliation_ref"
             )
         effect_rows = sum(state in V3_ACTION_EFFECT_STATUSES for state in states)
         if effect_rows > 1:
