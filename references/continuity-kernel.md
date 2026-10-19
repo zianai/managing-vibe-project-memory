@@ -82,6 +82,9 @@ evidence_refs: []
 updated: "2026-08-19"
 ```
 
+Every field and value the checker enforces, for this task schema and every
+other record, is listed in [field-reference.md](field-reference.md).
+
 References are project-root-relative, remain inside the project, and must not
 traverse symlinks. An external mutable link may appear only as context inside a
 local referenced note; it is not authority. `scope` is a semantic boundary, not

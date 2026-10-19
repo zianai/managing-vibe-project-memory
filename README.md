@@ -398,6 +398,7 @@ updated: "2026-08-19"
 详细说明：
 
 - [连续性内核](references/continuity-kernel.md)：`continuity-kernel`
+- [字段参考](references/field-reference.md)：`field-reference`（检查器读取的每个字段、允许值与规则，以及主体的生成方式）
 - [人类对齐](references/human-alignment.md)：`human-alignment`
 - [视觉对齐](references/visual-alignment.md)：`visual-alignment`
 - [高影响外部操作](references/high-impact-actions.md)：`high-impact-actions`
@@ -522,6 +523,7 @@ managing-vibe-project-memory/
 ├── assets/project-template/         # 最小内核与可选记录模板
 ├── references/
 │   ├── continuity-kernel.md         # schema、权威、恢复与验证规则
+│   ├── field-reference.md           # 检查器强制的字段、取值与主体
 │   ├── human-alignment.md           # 人类决策与验收
 │   ├── visual-alignment.md          # 视觉基线、实现渲染与一致性
 │   ├── high-impact-actions.md       # 外部操作、幂等与对账

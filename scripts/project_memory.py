@@ -20,6 +20,7 @@ TEMPLATE_FILES = {
 }
 GUIDE_SECTIONS = (
     "continuity-kernel",
+    "field-reference",
     "human-alignment",
     "visual-alignment",
     "high-impact-actions",

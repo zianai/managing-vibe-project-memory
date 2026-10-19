@@ -69,6 +69,8 @@ effect is real, raise `risk` or add the matching `risk_reasons` entry.
 
 - Read [continuity-kernel.md](references/continuity-kernel.md) when creating or
   updating records: schemas, field ownership, subjects, and claim freshness.
+- Read [field-reference.md](references/field-reference.md) for the exact fields,
+  allowed values, and checker rules of every record, and how to produce subjects.
 - Read [human-alignment.md](references/human-alignment.md) when a human-owned
   decision, material scope/risk change, or reserved acceptance matters.
 - Read [visual-alignment.md](references/visual-alignment.md) when visual
