@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 import argparse
-import ast
 import hashlib
 import json
 import re
@@ -14,6 +13,8 @@ from datetime import datetime, time
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
+
+from flat_yaml import load_flat_yaml, parse_flat_yaml_text, unquoted_integer_hint
 
 
 CONTINUITY_KERNEL_PROTOCOL = "3.0"
@@ -311,104 +312,6 @@ def substantive_section_body(text: str) -> bool:
     if len(cleaned) < 20:
         return False
     return not low_information_repetition(cleaned)
-
-
-def parse_scalar(raw: str) -> Any:
-    value = raw.strip()
-    lowered = value.lower()
-    if lowered in {"null", "~", ""}:
-        return None
-    if lowered == "true":
-        return True
-    if lowered == "false":
-        return False
-    if value.startswith("[") and value.endswith("]"):
-        body = value[1:-1].strip()
-        if not body:
-            return []
-        return [parse_scalar(part) for part in body.split(",")]
-    if (value.startswith('"') and value.endswith('"')) or (
-        value.startswith("'") and value.endswith("'")
-    ):
-        try:
-            return ast.literal_eval(value)
-        except (SyntaxError, ValueError):
-            return value[1:-1]
-    if re.fullmatch(r"-?\d+", value):
-        return int(value)
-    return value
-
-
-def parse_flat_yaml_text(content: str) -> dict[str, Any]:
-    data: dict[str, Any] = {}
-    current_list: str | None = None
-    for line_number, raw_line in enumerate(content.splitlines(), 1):
-        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
-            continue
-        if raw_line.startswith("  - ") and current_list:
-            data[current_list].append(parse_scalar(raw_line[4:]))
-            continue
-        if raw_line[:1].isspace():
-            raise ValueError(f"unsupported nested YAML at line {line_number}")
-        if ":" not in raw_line:
-            raise ValueError(f"expected key: value at line {line_number}")
-        key, raw_value = raw_line.split(":", 1)
-        key = key.strip()
-        if not key:
-            raise ValueError(f"empty key at line {line_number}")
-        if key in data:
-            raise ValueError(f"duplicate key '{key}' at line {line_number}")
-        if not raw_value.strip():
-            data[key] = []
-            current_list = key
-        else:
-            data[key] = parse_scalar(raw_value)
-            current_list = None
-    return data
-
-
-def load_flat_yaml(path: Path) -> dict[str, Any]:
-    return parse_flat_yaml_text(path.read_text(encoding="utf-8"))
-
-
-def parse_v3_yaml_text(content: str) -> dict[str, Any]:
-    """Parse the flat portable core while ignoring nested top-level x_* extensions."""
-    data: dict[str, Any] = {}
-    current_list: str | None = None
-    ignored_extension: str | None = None
-    for line_number, raw_line in enumerate(content.splitlines(), 1):
-        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
-            continue
-        if raw_line[:1].isspace():
-            if ignored_extension is not None:
-                continue
-            if raw_line.startswith("  - ") and current_list:
-                data[current_list].append(parse_scalar(raw_line[4:]))
-                continue
-            raise ValueError(f"unsupported nested YAML at line {line_number}; use a top-level x_* extension or a referenced native file")
-        ignored_extension = None
-        current_list = None
-        if ":" not in raw_line:
-            raise ValueError(f"expected key: value at line {line_number}")
-        key, raw_value = raw_line.split(":", 1)
-        key = key.strip()
-        if not key:
-            raise ValueError(f"empty key at line {line_number}")
-        if key in data:
-            raise ValueError(f"duplicate key '{key}' at line {line_number}")
-        if not raw_value.strip() and key.startswith("x_"):
-            data[key] = "<nested-extension>"
-            ignored_extension = key
-        elif not raw_value.strip():
-            data[key] = []
-            current_list = key
-        else:
-            data[key] = parse_scalar(raw_value)
-    return data
-
-
-def load_v3_yaml(path: Path) -> dict[str, Any]:
-    return parse_v3_yaml_text(path.read_text(encoding="utf-8"))
 
 
 def as_list(value: Any) -> list[Any]:
@@ -969,7 +872,7 @@ def v3_load_claim_record(path: Path, kind: str) -> dict[str, Any]:
     if path.suffix.lower() not in {".md", ".yaml", ".yml"}:
         raise ValueError(f"{kind} record must be YAML or Markdown with YAML front matter")
     if path.suffix.lower() in {".yaml", ".yml"}:
-        return load_v3_yaml(path)
+        return load_flat_yaml(path)
     content = path.read_text(encoding="utf-8")
     lines = content.splitlines()
     if not lines or lines[0].strip() != "---":
@@ -978,7 +881,7 @@ def v3_load_claim_record(path: Path, kind: str) -> dict[str, Any]:
         end = next(index for index, line in enumerate(lines[1:], 1) if line.strip() == "---")
     except StopIteration as exc:
         raise ValueError(f"current {kind} record has unclosed YAML front matter") from exc
-    return parse_v3_yaml_text("\n".join(lines[1:end]))
+    return parse_flat_yaml_text("\n".join(lines[1:end]))
 
 
 def v3_validate_claim_file(path: Path, label: str, errors: list[str]) -> None:
@@ -1308,7 +1211,7 @@ def v3_validate_task(
         errors.append(f"{relative}: missing regular task.yaml")
         return None
     try:
-        task = load_v3_yaml(task_file)
+        task = load_flat_yaml(task_file)
     except (OSError, ValueError) as exc:
         errors.append(f"{relative}/task.yaml: {exc}")
         return None
@@ -1320,7 +1223,11 @@ def v3_validate_task(
     if task_id != task_dir.name:
         errors.append(f"{relative}/task.yaml: id '{task_id}' does not match directory name")
     if task.get("schema_version") != 3:
-        errors.append(f"{relative}/task.yaml: schema_version must be 3")
+        errors.append(
+            f"{relative}/task.yaml: unsupported schema_version {task.get('schema_version')!r}; "
+            "protocol 3.0 requires schema_version: 3"
+            + unquoted_integer_hint("schema_version", task.get("schema_version"), 3)
+        )
     if str(task.get("protocol_version") or "") != CONTINUITY_KERNEL_PROTOCOL:
         errors.append(f'{relative}/task.yaml: protocol_version must be "3.0"')
 
@@ -1944,7 +1851,7 @@ def check_project_v3(
                     f"{descendant.relative_to(project_root)}: project authority descendant must not be a symlink"
                 )
     try:
-        state = load_v3_yaml(state_path)
+        state = load_flat_yaml(state_path)
     except (OSError, ValueError) as exc:
         errors.append(f"project/state.yaml: {exc}")
         return errors
@@ -1952,7 +1859,10 @@ def check_project_v3(
         if key not in state:
             errors.append(f"project/state.yaml: missing required field '{key}'")
     if state.get("schema_version") != 3:
-        errors.append("project/state.yaml: unsupported schema; this distribution requires schema_version: 3")
+        errors.append(
+            "project/state.yaml: unsupported schema; this distribution requires schema_version: 3"
+            + unquoted_integer_hint("schema_version", state.get("schema_version"), 3)
+        )
     if str(state.get("protocol_version") or "") != CONTINUITY_KERNEL_PROTOCOL:
         errors.append('project/state.yaml: unsupported protocol; this distribution requires protocol_version: "3.0"')
 

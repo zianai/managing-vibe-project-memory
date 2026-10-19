@@ -11,6 +11,8 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from flat_yaml import load_flat_yaml, unquoted_integer_hint
+
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_ROOT = SKILL_ROOT / "assets" / "project-template"
@@ -22,60 +24,6 @@ PLACEHOLDER_RE = re.compile(
     r"\{\{[^}]+\}\}|\b(?:TODO|TBD|FIXME)\b|\bREPLACE[_ -]?(?:ME|THIS|THE|WITH)\b",
     re.IGNORECASE,
 )
-
-
-def read_portable_scalars(path: Path) -> dict[str, object]:
-    data: dict[str, object] = {}
-    current_list: str | None = None
-    ignored_extension = False
-    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
-            continue
-        if raw_line[:1].isspace():
-            if ignored_extension:
-                continue
-            if raw_line.startswith("  - ") and current_list:
-                item = raw_line[4:].strip().strip('"').strip("'")
-                value = data.get(current_list)
-                if isinstance(value, list):
-                    value.append(item)
-                continue
-            raise ValueError(
-                f"unsupported nested core YAML at line {line_number}; use a top-level x_* extension"
-            )
-        current_list = None
-        ignored_extension = False
-        if ":" not in raw_line:
-            raise ValueError(f"expected key: value at line {line_number}")
-        key, value = raw_line.split(":", 1)
-        key = key.strip()
-        if key in data:
-            raise ValueError(f"duplicate key '{key}' at line {line_number}")
-        raw_value = value.strip()
-        if not raw_value and key.startswith("x_"):
-            data[key] = "<nested-extension>"
-            ignored_extension = True
-            continue
-        if not raw_value:
-            data[key] = []
-            current_list = key
-            continue
-        scalar = raw_value.strip('"').strip("'")
-        if raw_value.startswith("[") and raw_value.endswith("]"):
-            inner = raw_value[1:-1].strip()
-            parsed = [] if not inner else [
-                item.strip().strip('"').strip("'") for item in inner.split(",")
-            ]
-        elif scalar == "null":
-            parsed: object = None
-        elif scalar in {"true", "false"}:
-            parsed = scalar == "true"
-        elif scalar.isdigit():
-            parsed = int(scalar)
-        else:
-            parsed = scalar
-        data[key] = parsed
-    return data
 
 
 def protected_path_covers_output(protected: str, output: Path) -> bool:
@@ -96,12 +44,15 @@ def incompatible_existing_authority(
         if not path.exists():
             continue
         try:
-            record = read_portable_scalars(path)
+            record = load_flat_yaml(path)
             raw = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError, ValueError) as exc:
             return f"existing {kind} authority is unreadable or malformed: {path.relative_to(project_root)}: {exc}"
         if record.get("schema_version") != 3 or str(record.get("protocol_version") or "") != "3.0":
-            return f"existing {kind} authority is incompatible with protocol 3.0: {path.relative_to(project_root)}"
+            return (
+                f"existing {kind} authority is incompatible with protocol 3.0: {path.relative_to(project_root)}"
+                + unquoted_integer_hint("schema_version", record.get("schema_version"), 3)
+            )
         required = (
             ("project_id", "project_name", "status", "active_task", "updated")
             if kind == "state"

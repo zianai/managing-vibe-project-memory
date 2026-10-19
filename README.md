@@ -529,6 +529,7 @@ managing-vibe-project-memory/
 └── scripts/
     ├── init_project_memory.py       # 安全初始化器
     ├── check_project_memory.py      # 只读一致性检查器
+    ├── flat_yaml.py                 # 两个脚本共用的扁平 YAML 子集解析器
     └── project_memory.py            # 命令转发与资源输出
 ```
 

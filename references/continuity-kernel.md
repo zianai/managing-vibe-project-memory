@@ -92,6 +92,17 @@ Status is descriptive recovery metadata. Protocol 3.0 does not impose one fixed 
 
 Unknown extension fields are allowed and ignored safely unless they contradict a core field or activate a declared overlay.
 
+### Flat YAML Subset
+
+State, task, handoff, review, and action records share one flat YAML subset (`scripts/flat_yaml.py`):
+
+- Top-level `key: value` scalars and flow lists such as `[src/, "notes/a, b.md"]`; commas split items only outside quotes.
+- Block lists directly under an empty `key:` line, with `- item` at column 0 or indented.
+- `#` comments outside quotes, at line start or after whitespace (`risk: low  # local only`). A `#` with no space before it is part of the value, so `notes.md#section` keeps its fragment.
+- Nested data only inside a top-level `x_*` extension, which the checker skips.
+
+Nested mappings, block scalars (`|`, `>`), and duplicate keys are rejected with a message. `schema_version` is the unquoted integer `3`; `schema_version: "3"` is rejected with a hint to write `schema_version: 3`.
+
 ## Event-Triggered Artifacts
 
 ### Decisions
