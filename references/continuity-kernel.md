@@ -131,7 +131,7 @@ Create durable evidence only when later reproduction, audit, visual comparison, 
 ## Validation Modes
 
 - Default/focus mode validates state, recovery-focus task, refs, protected-path consistency, subject freshness, activated overlays, and contradictions between status and results.
-- `--full` validates all managed active/archived records and completion/audit consistency.
+- `--full` validates all managed active/archived records and completion/audit consistency, and, like focus mode, that a non-null `active_task` exists in `work/active/`.
 - Freshness applies to current claims. For tasks under `work/archive/`, subjects are history and are not compared with today's worktree: a `git:` subject must name a commit that exists (the worktree need not match it or be clean); a `worktree:`/`patch:` digest cannot be recomputed after the fact, so only its 64-hex shape is checked; a `sha256:` subject is still verified against its artifact. This covers review, handoff, merge-resolution, and action-record subjects. Active tasks keep the full freshness rules.
 - `ERROR` lines fail the check (exit `1`). `WARNING` lines follow the errors and are advisory; a check with only warnings exits `0`. Prose signals in `goal`/`scope` produce warnings only; declared `risk_reasons`, `effect_*`, `external_effects`, and `action_refs` set the risk floor.
 
@@ -150,14 +150,23 @@ python3 <skill-dir>/scripts/project_memory.py archive <project-root> <task-id>
 ```
 
 - It moves `work/active/<id>/` to `work/archive/<id>/` with one rename, creating `work/archive/` if needed.
-- It rewrites `work/active/<id>` to `work/archive/<id>` in `.yaml`, `.yml`, and `.md` files in the moved folder, the other `work/active/` tasks, and `project/`. A longer id such as `<id>-v2` is never matched.
-- Other archived tasks are history and are never edited; a `WARNING` names any that still mention the old path.
-- If `project/state.yaml` has `active_task: <id>`, it becomes `active_task: null` with today's `updated`; any other focus is kept.
-- It prints `MOVE`, `REWRITE`, and `STATE` lines; `--dry-run` prints the same plan and changes nothing.
-- It refuses (exit `2`, nothing changed) an invalid or missing task, an existing `work/archive/<id>`, any symlink in the paths it would move or rewrite, and, in a Git repository, uncommitted or untracked changes in the task folder or in files it would rewrite. Commit those first.
-- It never stages or commits, and rolls everything back if a step fails.
+- It rewrites `work/active/<id>` to `work/archive/<id>` only in protocol records: `project/state.yaml`, every active task's `task.yaml`, and the front matter of the handoff, review, and action records those tasks reference (a `.yaml` record is rewritten whole). A longer id such as `<id>-v2` is never matched.
+- Every other file keeps its bytes: artifacts, notes, decision bodies, Markdown bodies below the front matter, and other archived tasks, which are history and are never edited. A `sha256:` subject bound to such a file therefore stays valid. A `WARNING` names each file that still mentions the old path.
+- If `project/state.yaml` has `active_task: <id>` (also written `active_task : <id>`), it becomes `active_task: null` with today's `updated`; any other focus is kept.
+- It prints `MOVE`, `REWRITE`, `STATE`, and `WARNING` lines; `--dry-run` prints the same plan and changes nothing.
+- It refuses (exit `2`, nothing changed) when:
+  - the task id is invalid or missing, or `work/archive/<id>` exists;
+  - a path it would move or rewrite contains a symlink;
+  - `project/state.yaml` or an active `task.yaml` is missing, unreadable, or not schema 3 / protocol 3.0;
+  - the move (the folder it empties or the `work/archive/<id>` it creates) or a rewrite touches a path that any active task, the archived one included, lists in `protected_paths`;
+  - the change would invalidate a claim the checker still validates: a `sha256:` subject of any task, active or archived, whose file would be rewritten, or another active task's `git:`/`worktree:` subject whose paths would be moved or rewritten;
+  - an archived record references a file inside the task being moved, in any spelling the checker accepts, such as `./work/active/<id>/…` (archived history is never edited, so the reference would break);
+  - in a Git repository, the task folder has uncommitted or untracked changes, or a file it would rewrite is untracked, ignored, or modified. Commit those first.
+- If `check --full` passes before the archive, it must still pass after it: archive applies the plan, runs the full check, and rolls everything back (exit `2`, listing the new errors) if the archive made it fail. If the project already failed the check, a `WARNING` says the result could not be verified.
+- Each rewrite replaces the file atomically. If a step fails, it restores every byte, verifies the result, and moves the folder back; if the rollback cannot be completed it exits `3`, lists each residue, and saves the original bytes to a backup folder.
+- It never stages or commits. After a successful run it prints a `git add -A -- …` command that names only the moved folder and the other rewritten files.
 
-Afterwards run `check --full` and commit the move. The archived task's claims are then checked as history (see above).
+Afterwards stage with the printed command (not whole folders, which can sweep in someone else's uncommitted work), and commit. The archived task's claims are then checked as history (see above).
 
 ## Record Templates
 

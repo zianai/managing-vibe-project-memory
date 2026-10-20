@@ -13,9 +13,9 @@ Where the prose references say something different, see
 | Rule | Applies to | Values | Checker enforces |
 | --- | --- | --- | --- |
 | File reference | every `*_ref` field and every item of a `*_refs` list in task, handoff, review and action records (not `x_*`) | project-relative path, optional `#fragment` | not empty, not absolute, no `..`, no `scheme://` URI, stays inside the project, no symlink at or below the project root, exists, is a regular file |
-| Path list | `protected_paths`, `parallel_overlap_paths`, `subject_paths` | project-relative paths | same containment and symlink rules; the path may be missing and may be a folder (`subject_paths` must name a regular file for `git:`/`worktree:`) |
+| Path list | `protected_paths`, `parallel_overlap_paths`, `subject_paths` | project-relative paths | same containment and symlink rules; the path may be missing and may be a folder (`subject_paths` must name a regular file for `git:`/`worktree:`, and each item must be a string: quote a name that YAML reads as a number, boolean or null, such as `["001"]`) |
 | Task id | `id`, `active_task`, task folder names | `T-<NNN>-<slug>` or `T-<AREA>-<NNN>-<slug>` (`AREA` is 2–12 uppercase letters/digits) | folder name and `id` must match the pattern; `id` must equal the folder name |
-| Placeholders | `task.yaml`, claim files, action-record required fields | none of `{{…}}`, `TODO`, `TBD`, `REPLACE ME`, `REPLACE THIS/THE/WITH`, `LOREM IPSUM`, template comments | a placeholder in `task.yaml` is an error unless `status: proposed` with no `implementation_started` or completion claim |
+| Placeholders | `task.yaml` core fields, claim files, action-record required fields | none of `{{…}}`, `TODO`, `TBD`, `REPLACE ME`, `REPLACE THIS/THE/WITH`, `LOREM IPSUM`, template comments | a placeholder in a core `task.yaml` field is an error unless `status: proposed` with no `implementation_started` or completion claim; YAML comments and `x_*` extensions are not scanned. The initializer applies the same rule |
 | Claim file | `handoff_ref`, `review_ref`, `completion_acceptance_ref`, `authority_ref`, `reconciliation_ref` and other claim refs | any readable file | not empty; text formats contain no placeholder |
 | Decision file | `baseline_decision_ref`, `difference_decision_ref`, `merge_resolution_ref` | any readable file | claim-file rules plus at least 12 letters/digits of content |
 | Output | every check | `ERROR`, `WARNING` | any `ERROR` exits `1`; `WARNING` lines alone exit `0` |
@@ -29,7 +29,7 @@ Where the prose references say something different, see
 | `project_id` | required | any | presence only |
 | `project_name` | required | any | presence only |
 | `status` | required | any | presence only |
-| `active_task` | required | task id, or `null` | must match the task-id pattern; default/`--focus` mode requires `work/active/<id>/` |
+| `active_task` | required | task id, or `null` | must match the task-id pattern; both default/`--focus` and `--full` require `work/active/<id>/` |
 | `updated` | required | any | presence only |
 | `focus_task` | forbidden | — | error: use `active_task` |
 | `protected_paths` | forbidden | — | error: belongs in `task.yaml` |
@@ -105,6 +105,9 @@ High-impact completion additionally requires `review_ref` with a passing
 `independent_actor` review (see [Review](#review-front-matter)), and every
 `action_refs` group finished: `succeeded` or `compensated`, or `failed` with
 `no-effect-confirmed`/`compensated-confirmed`, and no unreconciled `unknown`.
+An action record without an `idempotency_key` belongs to no group and can only
+be `planned`, so any completion claim with one is an error; remove an action
+that will not run from `action_refs`.
 
 ### Handoff And Review
 
@@ -194,7 +197,7 @@ fields must not contain placeholders. "Execution statuses" are `authorized`,
 | `authorization_basis` | key always; value checked in execution statuses | `direct-human-instruction`, `durable-decision`, `platform-authority`, `external-attestation`, `delegated-authority`; denied: `next`, `generic-next`, `continue`, `ok`, `okay`, `yes`, `silence`, `in-artifact-control`, `agent-relay`, `summarized-approval` | in execution statuses must be an allowed slug |
 | `authority_ref` | key always; value in execution statuses | claim file | set and a valid claim file in execution statuses |
 | `one_shot` | required | `true` | must be `true` |
-| `idempotency_key` | key always; value in execution statuses | nonempty | records sharing a key share target, environment, payload scope and subject; at most one `succeeded`/`compensated` per key |
+| `idempotency_key` | key always; value in execution statuses | nonempty | records sharing a key share target, environment, payload scope and subject; at most one `succeeded`/`compensated` per key; a record without one blocks a completion claim |
 | `expires_at` | required | ISO date or date-time | parseable; must be in the future while `authorized` or `executing` |
 | `timeout_seconds` | required | positive integer | integer above `0` |
 | `status` | required | `planned`, `authorized`, `executing`, `succeeded`, `failed`, `unknown`, `compensated` | value in the set |
@@ -210,12 +213,15 @@ fields must not contain placeholders. "Execution statuses" are `authorized`,
 
 A subject binds a claim to exact content. Print one with
 `python3 <skill-dir>/scripts/project_memory.py subject <project-root> <kind> <path>...`
-and paste the output into the front matter.
+and paste the output into the front matter. The command refuses (exit `2`) git-ignored files for
+`git`/`worktree`, and any path containing `#`, which a reference reads as a
+`#fragment`; it quotes names that YAML would otherwise read as a number, boolean
+or null, so its output always reads back unchanged.
 
 | Kind | Use when | Produce with | Active task: checker enforces | Archived task: checker enforces |
 | --- | --- | --- | --- | --- |
-| `git:<full-sha>` (40 or 64 hex) | the work is committed | `subject <root> git <path>...` (prints `subject` and `subject_paths`) | commit exists; `subject_paths` required; each path is a regular file in the worktree or commit; paths unchanged since the commit and clean in `git status` | commit exists; `subject_paths` required |
-| `worktree:<sha256>` | the work is not committed yet | `subject <root> worktree <path>...` (prints `subject` and `subject_paths`) | recomputed digest of `HEAD`, `git status`, the diff against `HEAD`, and untracked files under `subject_paths` (required) must match; the digest includes `HEAD`, so any new commit makes it stale; use `git:` for committed work | 64 hex characters |
+| `git:<full-sha>` (40 or 64 hex) | the work is committed | `subject <root> git <path>...` (prints `subject` and `subject_paths`) | full 40/64-hex SHA (a branch, tag, `HEAD` or abbreviated SHA is an error, because it moves with new commits); commit exists; `subject_paths` required; each path is a regular file in the worktree or commit; paths unchanged since the commit and clean in `git status` | full SHA of an existing commit; `subject_paths` required |
+| `worktree:<sha256>` | the work is not committed yet | `subject <root> worktree <path>...` (prints `subject` and `subject_paths`) | recomputed digest of `HEAD`, `git status`, the diff against `HEAD`, and untracked files under `subject_paths` (required) must match; the digest includes `HEAD`, so any new commit makes it stale; use `git:` for committed work; an untracked git-ignored file under `subject_paths` is an error, because its bytes are not in the digest (bind it with `sha256:`) | 64 hex characters |
 | `patch:<sha256>` | still accepted alias of `worktree:`; don't use it in new records | `subject <root> worktree <path>...`, then use `worktree:` | same as `worktree:` | same as `worktree:` |
 | `sha256:<hex>` | one artifact file (export, payload, render) | `subject <root> sha256 <path>` (prints `subject` and `subject_ref`) | SHA-256 of `subject_ref` matches | SHA-256 of `subject_ref` matches |
 | `provider:<identity>` / `artifact:<identity>` | an external revision (design tool, registry) | written by hand from the provider's immutable revision | identity at least 8 characters without `current`, `draft`, `head`, `latest`, `main`, `master`, `mutable` or `working`; `subject_paths` must be current regular files; visual subjects also need a revision and a frame/node/page/screen identity | same |
