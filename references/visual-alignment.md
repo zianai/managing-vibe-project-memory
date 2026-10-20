@@ -24,9 +24,12 @@ One artifact may cover several levels. Split experience and visual reviews only 
 
 A durable visual baseline must actually expose the claimed visual or interaction decision; prose describing a screen is not a visual baseline. A provider artifact needs a fixed revision and exact frame/node scope. Keep a local export when provider-less recovery matters. A mutable external link may appear only as context through a project-local note; it is not authority.
 
-When activated, the task always names stable `approved_baseline_subject` and
-`implementation_render_subject`, plus a substantive `baseline_decision_ref` and
-`conformance_status`. An immutable provider/artifact subject that includes its
+`conformance_status` records where the comparison stands: `not_required` (the
+default), `pending`, `changes_requested`, or one of the two conformance claims,
+`matched` and `differences_accepted`. A conformance claim requires stable
+`approved_baseline_subject` and `implementation_render_subject`, plus a
+substantive `baseline_decision_ref`; `differences_accepted` also requires a
+`difference_decision_ref`. An immutable provider/artifact subject that includes its
 revision and exact frame, node, page, or capture scope may stand alone; its
 project-local `approved_baseline_ref` or `implementation_render_ref` is an
 optional recovery/context export. A `sha256:` or other local-byte subject must
@@ -41,6 +44,8 @@ meaning.
 Before expensive implementation, expose the unresolved human-owned choice and state what the decision would and would not authorize. Natural confirmation is valid only after it is normalized as a direct human instruction with one unambiguous current referent. Record a substantive decision, its subject/revision, scope, conditions, and what remains undecided.
 
 If the human delegates design, record that boundary and let the agent exercise current design capability. Describe the result as agent-designed unless the human later approves it.
+
+When the human reserves visual preference, set `visual_alignment: reserved` in the task. Once the task sets `implementation_started: true` or any `conformance_status` other than `not_required`, `visual_alignment_status` must be `accepted` (the human accepted the visual direction) or `delegated` (the human delegated the design judgment).
 
 ## Conformance
 

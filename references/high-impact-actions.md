@@ -4,7 +4,7 @@
 
 Activate this overlay for production deployment, publication, real-user or sensitive data, payment, messaging, account changes, security or safety controls, legal commitments, destructive/irreversible operations, or a similarly consequential external effect. Code that merely prepares an action is not execution.
 
-The task owns its risk rating. Declarations activate the overlay mechanically: a high-impact `risk_reasons` entry, a high-impact `effect_*` value, `external_effects` other than `none`, or any `action_refs`. The checker also scans `goal` and `scope` prose for consequential wording, but a match is only a `WARNING`: it never raises the floor or fails the check. If the effect is real, set `risk: high` or add the matching `risk_reasons` entry.
+The task owns its risk rating. Declarations activate the overlay mechanically: a high-impact `risk_reasons` entry, a high-impact `effect_*` value (`effect_reversibility: irreversible`, `effect_data: personal-or-sensitive`, `effect_environment: production`, `effect_external: message-or-publish` or `payment-or-legal`, `effect_security_safety: involved`, `effect_user_impact: direct`; other values are ignored), `external_effects` other than `none`, or any `action_refs`. The checker also scans `goal` and `scope` prose for consequential wording, but a match is only a `WARNING`: it never raises the floor or fails the check. If the effect is real, set `risk: high` or add the matching `risk_reasons` entry.
 
 ## Action Identity And Record
 
@@ -17,7 +17,7 @@ Status is exactly one of `planned`, `authorized`, `executing`, `succeeded`,
 requires action record(s), or the task must explicitly state
 `external_effects: none`.
 
-`authorization_basis` is lightweight evidence of bounded authority. It becomes required only when actual execution or completion is claimed; it does not require a versioned start package.
+`authorization_basis` is lightweight evidence of bounded authority; it does not require a versioned start package. Every action record carries the keys `authorization_basis`, `authority_ref`, `idempotency_key`, `expires_at`, `timeout_seconds`, `observation`, and `compensation`, even while `planned`. While `planned`, `authorization_basis`, `authority_ref`, `idempotency_key`, `observation`, and `compensation` may be `null`; in the execution statuses (`authorized`, `executing`, `succeeded`, `failed`, `unknown`, `compensated`) their values are required. `expires_at` and `timeout_seconds` need valid values in every status.
 
 ## Authority
 

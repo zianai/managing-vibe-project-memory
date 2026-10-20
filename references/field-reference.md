@@ -5,8 +5,9 @@ for protocol 3.0. Rows describe what the code does; anything not listed is not
 checked mechanically. Unknown fields are allowed, nested data is allowed only
 inside a top-level `x_*` extension, and every record uses the flat YAML subset
 described in [continuity-kernel.md](continuity-kernel.md#flat-yaml-subset).
-Where the prose references say something different, see
-[Known Disagreements](#known-disagreements).
+For mechanical rules this file and the checker are normative; the prose
+references describe intent and claim no mechanical rule beyond these. The one
+remaining exception is listed in [Known Disagreements](#known-disagreements).
 
 ## Common Rules
 
@@ -47,9 +48,9 @@ Where the prose references say something different, see
 | `goal` | required | string or list | at least one nonempty value; risk wording produces a `WARNING` when `risk` is not `high` |
 | `scope` | required | list or string | at least one nonempty value; scanned like `goal` |
 | `non_goals` | required | list | presence only |
-| `acceptance` | required | list or string | at least one nonempty value |
+| `acceptance` | required | list or string | at least one nonempty value; whether it is satisfied is not checked |
 | `risk` | required | `low`, `medium`, `high` | valid level; not below any `risk_reasons` floor; `high` whenever the task is high-impact |
-| `risk_reasons` | required | see [Risk Reasons](#risk-reasons) | at least one nonempty reason |
+| `risk_reasons` | required | see [Risk Reasons](#risk-reasons) | at least one nonempty reason; an unlisted value produces a `WARNING` |
 | `protected_paths` | required | list of paths | path-list rules |
 | `context_refs` | required | list of file refs | file-reference rules |
 | `decision_refs` | required | list of file refs | file-reference rules |
@@ -72,7 +73,7 @@ Where the prose references say something different, see
 | `payment-or-message` | `high` | yes | `risk: high` |
 | `legal-impact` | `high` | yes | `risk: high` |
 | `custom-<low\|medium\|high>:<slug>` | the named level | only `custom-high:<slug>` | `risk` at least the named level, e.g. `custom-medium:vendor-api` |
-| any other value | none | no | accepted without a floor |
+| any other value | none | no | accepted without a floor, with a `WARNING` that names the value, a close listed reason if there is one, and the `custom-` form |
 
 ### Effects And External Actions
 
@@ -86,7 +87,7 @@ Where the prose references say something different, see
 | `effect_user_impact` | optional | `direct` is high-impact | same |
 | `external_effects` | high-impact completion without `action_refs` | `none`, or any description | any value other than `none` is high-impact; high-impact completion needs `action_refs` or `external_effects: none` |
 | `action_refs` | optional | list of action-record file refs | any entry is high-impact and needs `risk: high`; each record is validated; `action_id` unique across records; see [Action Record](#action-record-front-matter) |
-| `authorization_basis` | optional | slug; denied: `next`, `generic-next`, `continue`, `okay`, `silence`, `in-artifact-control`, `agent-relay`, `summarized-approval` | must be a lowercase slug and not a denied value |
+| `authorization_basis` | optional | slug; denied: `next`, `generic-next`, `continue`, `ok`, `okay`, `yes`, `silence`, `in-artifact-control`, `agent-relay`, `summarized-approval` (one list, shared with action records) | must be a lowercase slug and not a denied value |
 
 ### Claims And Completion
 
@@ -115,7 +116,7 @@ that will not run from `action_refs`.
 | --- | --- | --- | --- |
 | `handoff_ref` | required when `handoff_current: true` | claim file | claim-file rules |
 | `handoff_current` | optional | `true`, `false` | `true` validates the handoff front matter (`task_ref`, subject freshness) |
-| `handoff_subject_ref` | optional | file ref | file-reference rules only; the handoff's own `subject_ref` binds the subject |
+| `handoff_subject_ref` | optional; has no effect | file ref | file-reference rules, then a `WARNING` that it has no effect: the handoff's own `subject_ref` binds the subject |
 | `review_ref` | required when `review_current: true`, at high-impact completion, or with a conformance claim | claim file | claim-file rules; when required, the review front matter and body are validated |
 | `review_current` | optional | `true` | activates review validation |
 | `verification_mode`, `verification_status`, `verification_subject`, `verification_subject_ref`, `verification_subject_paths`, `verification_actor`, `verification_actor_modified_subject`, `review_subject`, `review_subject_ref`, `review_subject_paths`, `review_mode`, `review_verdict` | forbidden | — | error: these belong only in review front matter |
@@ -171,9 +172,9 @@ must contain at least 12 letters/digits of findings.
 | `subject` | required | see [Subjects](#subjects) | subject rules; freshness for active tasks; `git:`, `worktree:` or `patch:` at high-impact completion with `action_refs` |
 | `subject_ref` | `sha256:` subject | file ref | digest must match the file |
 | `subject_paths` | `git:`/`worktree:` subject | list of paths | at high-impact completion must include every task `action_refs` entry and each action's `subject_ref`/`subject_paths` |
-| `mode` | high-impact completion | `self_check`, `fresh_context`, `independent_actor`, `human` | `independent_actor` at high-impact completion; otherwise not checked |
+| `mode` | required | `self_check`, `fresh_context`, `independent_actor`, `human` | value in the set; `independent_actor` at high-impact completion |
 | `actor_modified_subject` | high-impact completion | `true`, `false` | must be `false` at high-impact completion |
-| `verdict` | high-impact completion or conformance claim | `passed`; other text (e.g. `changes_requested`) means not passed | must be `passed` |
+| `verdict` | high-impact completion or conformance claim | `passed`, `changes_requested`, `failed` | must be `passed`; any other value counts as not passed and is otherwise not checked |
 | `action_refs` | high-impact completion | list of action-record refs | same set as the task's `action_refs` |
 | `baseline_subject` | conformance claim | subject | equals the task's `approved_baseline_subject` |
 | `implementation_render_subject` | conformance claim | subject | equals the task's `implementation_render_subject` |
@@ -194,7 +195,7 @@ fields must not contain placeholders. "Execution statuses" are `authorized`,
 | `subject` | required | see [Subjects](#subjects) | nonempty; subject rules |
 | `subject_ref` | `sha256:` subject | file ref | digest must match the file |
 | `subject_paths` | `git:`/`worktree:` subject | list of paths | required for `git:` and `worktree:`; scope of the freshness check |
-| `authorization_basis` | key always; value checked in execution statuses | `direct-human-instruction`, `durable-decision`, `platform-authority`, `external-attestation`, `delegated-authority`; denied: `next`, `generic-next`, `continue`, `ok`, `okay`, `yes`, `silence`, `in-artifact-control`, `agent-relay`, `summarized-approval` | in execution statuses must be an allowed slug |
+| `authorization_basis` | key always; value checked in execution statuses | `direct-human-instruction`, `durable-decision`, `platform-authority`, `external-attestation`, `delegated-authority`; denied: the `task.yaml` list (see [Effects And External Actions](#effects-and-external-actions)) | in execution statuses must be an allowed slug |
 | `authority_ref` | key always; value in execution statuses | claim file | set and a valid claim file in execution statuses |
 | `one_shot` | required | `true` | must be `true` |
 | `idempotency_key` | key always; value in execution statuses | nonempty | records sharing a key share target, environment, payload scope and subject; at most one `succeeded`/`compensated` per key; a record without one blocks a completion claim |
@@ -228,15 +229,7 @@ or null, so its output always reads back unchanged.
 
 ## Known Disagreements
 
-This file describes what the checker currently does. In these places the prose
-references say something different; a later release will settle each one.
+This file describes what the checker currently does. In one place a protocol
+text still says something different:
 
-1. Review `mode`: `continuity-kernel.md` and `parallel-harness.md` present `self_check`, `fresh_context`, `independent_actor`, `human` as the vocabulary; the checker accepts any value and only requires `independent_actor` at high-impact completion.
-2. Review `verdict`: the review template uses `changes_requested`; the checker only compares against `passed` (high-impact completion and visual conformance) and treats any other value as not passed.
-3. Visual fields: `visual-alignment.md` and `AGENTS.md` say a visual task always names `approved_baseline_subject`, `implementation_render_subject`, `baseline_decision_ref` and `conformance_status`; the checker requires them only for a conformance claim (`matched`, `differences_accepted`), and the `visual_alignment: reserved` gate on `visual_alignment_status` appears in no prose reference.
-4. Human Completion acceptance: `human-alignment.md` requires it for high-impact work, residual risk, material deviation, or reserved acceptance; the checker requires `completion_acceptance_ref` for every `risk: high` completion, even with only `local-reversible` as a reason.
-5. Action-record keys: `high-impact-actions.md` says `authorization_basis` becomes required only once execution or completion is claimed; the checker requires the keys `authorization_basis`, `authority_ref`, `idempotency_key`, `expires_at`, `timeout_seconds`, `observation` and `compensation` in every action record, even `planned`, and checks their values only in execution statuses.
-6. `authorization_basis` deny lists: the task-level list denies `okay` but accepts `ok` and `yes`, while action records deny all three; the prose references don't distinguish the two lists.
-7. `done` and acceptance: `continuity-kernel.md` says `done` requires satisfied acceptance; the checker cannot verify that and enforces only the completion consequences (review, `completion_acceptance_ref`, finished actions, no `unresolved_choices`).
-8. `handoff_subject_ref` is only path-checked and has no other effect, and `merge_resolution_subject_ref` is accepted as a reference but is an error once `integration_status` is `resolved` or `merged`; no prose reference mentions either field.
-9. Fields only this file documents: `completion_claim`, `implementation_started`, `unresolved_choices`, `material_deviation`, `residual_risk`, `human_completion_reserved`, `parallel_overlap_paths`, `merge_resolution_*`, the `effect_*` names and values, the forbidden `result_status` and review-owned task fields, and unknown `risk_reasons` values being accepted without a floor.
+1. Visual fields in the project template's `AGENTS.md`: it says a visual task always names `approved_baseline_subject`, `implementation_render_subject`, `baseline_decision_ref` and `conformance_status`; the checker requires them only for a conformance claim (`matched`, `differences_accepted`), as [visual-alignment.md](visual-alignment.md) says. The template stays unchanged within protocol 3.0 because `init_project_memory.py` accepts an existing `AGENTS.md` only if it matches the template byte for byte, so any edit would make `init` refuse every project initialized before it. Follow this file and visual-alignment.md.

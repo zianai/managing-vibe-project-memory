@@ -23,8 +23,10 @@ At a real cross-harness handoff, create a task-local handoff only when Git/task/
 
 Before integration, confirm heads, protect unrelated local work, review conflicts semantically, run combined verification, and update `integration_status`. Overlap is resolved only when status is `resolved` or `merged` and the record references concrete resolution/merge evidence. Never silently choose the newest agent output.
 
+Paths that more than one harness changed may be listed in the task's `parallel_overlap_paths`, a hint rather than a lock. Once `integration_status` is `resolved` or `merged`, the task needs a substantive `merge_resolution_ref`, a `merge_resolution_subject` (`git:` or `worktree:`) for the combined result, and `merge_resolution_subject_paths` that include every `parallel_overlap_paths` entry. A `merge_resolution_subject_ref` is then an error: one file cannot stand in for the combined source scope.
+
 ## Verification Responsibility
 
-Builder and verifier describe events, not fixed agent IDs. Modes are `self_check`, `fresh_context`, `independent_actor`, and `human`. Low reversible work may use self-check; medium work benefits from fresh context; high-impact work requires independent actor.
+Builder and verifier describe events, not fixed agent IDs. Modes are `self_check`, `fresh_context`, `independent_actor`, and `human`; a checked review record names one of them in `mode`. Low reversible work may use self-check; medium work benefits from fresh context; high-impact work requires independent actor.
 
 If a reviewer modifies the subject, its prior verdict is stale. Reverify the new commit, patch, or artifact and record the actual mode.

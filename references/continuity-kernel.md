@@ -91,7 +91,9 @@ local referenced note; it is not authority. `scope` is a semantic boundary, not
 a mandatory exact file allowlist. `protected_paths` is exact hard protection:
 do not modify, stage, commit, delete, move, overwrite, or stash those paths.
 
-Status is descriptive recovery metadata. Protocol 3.0 does not impose one fixed lifecycle or forbid project extensions. Only a declared claim activates the matching consistency rule: for example, `done` requires satisfied acceptance and no unresolved required overlay; passed verification requires an exact reviewed subject and verdict; design approval requires human evidence; an executed external action requires an action record.
+Status is descriptive recovery metadata. Protocol 3.0 does not impose one fixed lifecycle or forbid project extensions. Only a declared claim activates the matching consistency rule: for example, passed verification requires an exact reviewed subject and verdict; design approval requires human evidence; an executed external action requires an action record.
+
+`status: done` or `completed`, or `completion_claim: true` with any other status, claims completion; `result_status` is rejected as ambiguous. Satisfying `acceptance` before that claim is the claimant's responsibility: the checker cannot verify it, and enforces only the completion consequences, namely a passing review where one is required, `completion_acceptance_ref` where human acceptance is required, finished action records, and no `unresolved_choices`. `implementation_started: true` declares that implementation has begun; from then on, as after a completion claim, the task may hold no template placeholders and no `unresolved_choices`.
 
 Unknown extension fields are allowed and ignored safely unless they contradict a core field or activate a declared overlay.
 
@@ -118,11 +120,13 @@ Natural human language is valid when the visible choice is singular and unambigu
 
 The outgoing agent creates or refreshes `handoff.md` without waiting for a human request when responsibility actually moves and task/Git/decisions/tests omit transient semantics needed next. This is an event response, not something an agent asks a human to request and not a human gate. Its YAML front matter owns a project-local task ref, exact subject, optional project-local subject ref, and bounded subject paths. The body records what is complete/incomplete, local state, observed checks, hazards, and next useful action without duplicating the subject metadata.
 
-Skip handoff when the minimal kernel and repository already answer those questions. The task stores only `handoff_ref` and `handoff_current`; the artifact front matter owns its subject. Handoff is a fallible claim, not authority, approval, verification, or a replacement for inspecting Git. A changed subject sets `handoff_current: false` until refreshed.
+Skip handoff when the minimal kernel and repository already answer those questions. The task stores only `handoff_ref` and `handoff_current`; the artifact front matter owns its subject, so a task-level `handoff_subject_ref` has no effect and produces a warning. Handoff is a fallible claim, not authority, approval, verification, or a replacement for inspecting Git. A changed subject sets `handoff_current: false` until refreshed.
 
 ### Review And Evidence
 
-Create `review.md` only for a formal verdict. Its YAML front matter solely owns the project-local task ref, exact subject/ref/paths, reviewer mode (`self_check`, `fresh_context`, `independent_actor`, or `human`), whether the actor modified the subject, covered `action_refs`, and verdict. The task owns only `review_ref` and `review_current`. The body owns evidence, findings, and limitations. Builder and verifier are responsibilities/events, not mandatory static IDs or proof of independence.
+Create `review.md` only for a formal verdict. Its YAML front matter solely owns the project-local task ref, exact subject/ref/paths, reviewer mode (`self_check`, `fresh_context`, `independent_actor`, or `human`), whether the actor modified the subject, covered `action_refs`, and verdict (`passed`, `changes_requested`, or `failed`). The task owns only `review_ref` and `review_current`; review metadata copied into `task.yaml`, such as `review_mode`, `review_verdict`, or `verification_status`, is an error. The body owns evidence, findings, and limitations.
+
+Whenever the review is checked (`review_current: true`, high-impact completion, or a visual conformance claim), `mode` must be one of the four modes. Where a passing review is required, only `verdict: passed` counts as passed; `changes_requested`, `failed`, or any other value does not. Builder and verifier are responsibilities/events, not mandatory static IDs or proof of independence.
 
 A low-risk self-check may remain a transient test observation and need not create `review.md`. High-impact completion requires a current `independent_actor` review record whose `action_refs` cover every exact action record. If the reviewer modifies the subject, that record cannot establish independent verification of the changed subject.
 
@@ -133,7 +137,7 @@ Create durable evidence only when later reproduction, audit, visual comparison, 
 - Default/focus mode validates state, recovery-focus task, refs, protected-path consistency, subject freshness, activated overlays, and contradictions between status and results.
 - `--full` validates all managed active/archived records and completion/audit consistency, and, like focus mode, that a non-null `active_task` exists in `work/active/`.
 - Freshness applies to current claims. For tasks under `work/archive/`, subjects are history and are not compared with today's worktree: a `git:` subject must name a commit that exists (the worktree need not match it or be clean); a `worktree:`/`patch:` digest cannot be recomputed after the fact, so only its 64-hex shape is checked; a `sha256:` subject is still verified against its artifact. This covers review, handoff, merge-resolution, and action-record subjects. Active tasks keep the full freshness rules.
-- `ERROR` lines fail the check (exit `1`). `WARNING` lines follow the errors and are advisory; a check with only warnings exits `0`. Prose signals in `goal`/`scope` produce warnings only; declared `risk_reasons`, `effect_*`, `external_effects`, and `action_refs` set the risk floor.
+- `ERROR` lines fail the check (exit `1`). `WARNING` lines follow the errors and are advisory; a check with only warnings exits `0`. Prose signals in `goal`/`scope` produce warnings only; declared `risk_reasons`, `effect_*`, `external_effects`, and `action_refs` set the risk floor. A `risk_reasons` value outside the listed reasons sets no floor and produces a warning; write an extension reason as `custom-<low|medium|high>:<slug>`.
 
 Both modes require schema 3 / protocol 3.0 for every selected record. Other
 declared versions are rejected without modifying them.

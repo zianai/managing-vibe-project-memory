@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 import argparse
+import difflib
 import hashlib
 import json
 import os
@@ -574,19 +575,8 @@ V3_CONFORMANCE_STATUSES = {
 }
 
 
+# One deny list for authorization_basis in task.yaml and in action records.
 V3_AUTHORITY_DENIALS = {
-    "next",
-    "generic-next",
-    "continue",
-    "okay",
-    "silence",
-    "in-artifact-control",
-    "agent-relay",
-    "summarized-approval",
-}
-
-
-V3_ACTION_AUTHORITY_DENIALS = {
     "next",
     "generic-next",
     "continue",
@@ -598,6 +588,9 @@ V3_ACTION_AUTHORITY_DENIALS = {
     "agent-relay",
     "summarized-approval",
 }
+
+
+V3_REVIEW_MODES = {"self_check", "fresh_context", "independent_actor", "human"}
 
 
 V3_ACTION_AUTHORITY_ALLOWED = {
@@ -1192,7 +1185,7 @@ def v3_validate_action_record(
         authority_category = str(record.get("authorization_basis") or "").strip().lower()
         if not SLUG_RE.fullmatch(authority_category):
             errors.append(f"{label}: action execution requires a normalized authorization_basis category slug")
-        elif authority_category in V3_ACTION_AUTHORITY_DENIALS:
+        elif authority_category in V3_AUTHORITY_DENIALS:
             errors.append(f"{label}: authorization_basis '{authority_category}' cannot authorize an external effect")
         elif authority_category not in V3_ACTION_AUTHORITY_ALLOWED:
             errors.append(f"{label}: authorization_basis '{authority_category}' is not a recognized direct authority category")
@@ -1364,14 +1357,17 @@ def v3_validate_task(
     floors: list[str] = []
     for reason in risk_reasons:
         floor = risk_factor_floor(reason)
-        if floor is None:
-            # v3 permits future extension reasons but a custom reason must carry
-            # its risk implication so an older harness can fail safely.
-            custom = re.fullmatch(r"custom-(low|medium|high):[a-z0-9]+(?:-[a-z0-9]+)*", reason)
-            if custom:
-                floor = custom.group(1)
         if floor:
             floors.append(floor)
+        elif reason:
+            # v3 permits extension reasons, but one outside the list sets no floor,
+            # so a misspelled listed reason would silently drop its floor.
+            close = difflib.get_close_matches(reason, RISK_FACTOR_FLOORS, n=1)
+            hint = f"did you mean '{close[0]}'? " if close else ""
+            warnings.append(
+                f"{relative}/task.yaml: risk_reasons entry '{reason}' is not a listed reason and sets no risk floor; "
+                f"{hint}write an extension reason as custom-<low|medium|high>:<slug>"
+            )
     if floors and risk in RISK_LEVEL_RANK and RISK_LEVEL_RANK[risk] < RISK_LEVEL_RANK[highest_risk(floors)]:
         errors.append(f"{relative}/task.yaml: risk is below the declared risk-reason floor")
     high_impact = v3_task_is_high_impact(task)
@@ -1472,6 +1468,11 @@ def v3_validate_task(
 
     task_ref = f"{relative.as_posix()}/task.yaml"
     handoff_path = optional_paths.get("handoff_ref")
+    if task.get("handoff_subject_ref") is not None:
+        warnings.append(
+            f"{relative}/task.yaml: handoff_subject_ref has no effect; "
+            "set subject_ref in the handoff front matter, which binds the handoff subject"
+        )
     if task.get("handoff_current") is True and handoff_path is None:
         errors.append(f"{relative}/task.yaml: handoff_current requires handoff_ref")
     if handoff_path is not None:
@@ -1549,6 +1550,12 @@ def v3_validate_task(
                     subject_paths=as_list(review_record.get("subject_paths")),
                     historical=historical,
                 )
+                review_mode = str(review_record.get("mode") or "")
+                if review_mode not in V3_REVIEW_MODES:
+                    errors.append(
+                        f"{relative}/task.yaml: invalid review mode '{review_mode}'; "
+                        "use self_check, fresh_context, independent_actor or human"
+                    )
                 if completion_claim and high_impact:
                     if str(review_record.get("verdict") or "") != "passed":
                         errors.append(f"{relative}/task.yaml: high-impact completion requires review verdict: passed")
