@@ -27,6 +27,8 @@ Pause for a human decision when:
 - implementation would materially deviate from a human-approved baseline;
 - a genuine product-value choice remains undecided.
 
+List such an open choice in the task's `unresolved_choices`; while the list is nonempty, the task cannot set `implementation_started: true` or claim completion.
+
 Do not pause for tool selection, code organization, test strategy, local diagnostics, reversible fixes, or another harness taking over the same confirmed work.
 
 ## Natural Decision Semantics
@@ -34,7 +36,11 @@ Do not pause for tool selection, code organization, test strategy, local diagnos
 Ordinary language is sufficient when one current choice is visible and
 unambiguous. “采用 A”, “okay”, or “可以” counts only after it is normalized as a
 `direct-human-instruction` whose referent is that visible choice. Record the
-conditions and what remains undecided.
+conditions and what remains undecided. `authorization_basis`, in `task.yaml` or
+an action record, names that normalized category, never the words themselves:
+approval wording such as `ok`, `okay`, `yes`, `continue`, or `next` is rejected
+in `task.yaml` and in an action record past `planned` (the full list is in
+[field-reference.md](field-reference.md)).
 
 These do not authorize an unseen or ambiguous boundary:
 
@@ -67,6 +73,6 @@ Bind to a commit, patch, or stable artifact revision when later changes could in
 
 Present a human-readable result when it materially helps the owner understand the outcome, tradeoffs, proof, or next decision. Choose text, table, diagram, visual, demo, or another medium adaptively.
 
-Exact H3 acceptance is required only for high-impact work, unresolved residual risk, material deviation/waiver, or when the human explicitly reserved completion acceptance. Ordinary low-risk completion does not require a separate acceptance round.
+Exact H3 acceptance is required only for high-impact work, unresolved residual risk, material deviation/waiver, or when the human explicitly reserved completion acceptance. A task that declares `risk: high` also requires it at completion, even when no high-impact effect is declared. Record the acceptance in `completion_acceptance_ref`; a completion claim needs that ref when the task has `risk: high`, sets `residual_risk`, `material_deviation: true`, or `human_completion_reserved: true`. Ordinary low-risk completion does not require a separate acceptance round.
 
 Always distinguish implemented, checks passed, independently verified, design preference approved, residual risk accepted, and target-user validated. Neither engineering verification nor an attractive artifact implies the others.

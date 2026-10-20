@@ -71,7 +71,9 @@ Use default/`--focus` checks during work and `--full` for all current-protocol
 tasks, including archives, before completion or audit. `ERROR` lines fail the
 check; `WARNING` lines are advisory and keep exit code `0`. A warning that the
 goal or scope mentions a consequential effect asks you to judge it: if the
-effect is real, raise `risk` or add the matching `risk_reasons` entry.
+effect is real, raise `risk` or add the matching `risk_reasons` entry. A warning
+that a `risk_reasons` entry is not listed usually means a typo that dropped its
+risk floor: fix the spelling, or write an extension as `custom-<level>:<slug>`.
 
 ## Load The Relevant Detail
 
