@@ -400,18 +400,90 @@ class ArchiveReviewScenarioTest(AuditArchiveCase):
         ), contextlib.redirect_stderr(stderr):
             code = tools.archive_main([str(self.project), OTHER_ID])
         self.assertEqual(code, 2, stderr.getvalue())
-        self.assertIn("would make `check --full` fail, so it was rolled back", stderr.getvalue())
+        self.assertIn("would add errors to `check --full`, so it was rolled back", stderr.getvalue())
         self.assertIn("referenced path does not exist", stderr.getvalue())
         self.assertEqual(tree_snapshot(self.project), before)
         self.assertFalse((self.project / f"work/archive/{OTHER_ID}").exists())
 
-    def test_archive_of_an_already_failing_project_warns_that_it_was_not_verified(self) -> None:
+    def test_archive_of_an_already_failing_project_reports_it_added_no_errors(self) -> None:
         self.write_task(render_task(status="done"))
         self.add_other_task(context_refs="[missing.md]")
         self.assertFailsWith(self.check("--full"), "referenced path does not exist")
         result = self.archive(TASK_ID)
         self.assertEqual(result.returncode, 0, output(result))
-        self.assertIn("check --full already failed before archiving (1 error(s))", result.stdout)
+        self.assertIn("still fails with the 1 error(s) it had before; archive added none", result.stdout)
+
+    def test_guard_errors_that_only_move_with_the_task_are_not_new(self) -> None:
+        # The archived task's own pre-existing error is reported under its new path afterwards.
+        self.write_task(render_task(status="done", context_refs="[missing.md]"))
+        self.assertFailsWith(self.check("--full"), f"{ACTIVE_TASK}/task.yaml:context_refs[0]")
+        result = self.archive(TASK_ID)
+        self.assertEqual(result.returncode, 0, output(result))
+        self.assertFailsWith(self.check("--full"), f"{ARCHIVED_TASK}/task.yaml:context_refs[0]")
+
+    def archived_task_with_a_malformed_review(self) -> Path:
+        """Scenario D: an archived task references T-002's notes and has a review with a duplicate key."""
+        other = self.add_other_task()
+        (other / "notes.md").write_text("Durable context and decisions.\n", encoding="utf-8")
+        artifact = self.project / "artifact.txt"
+        artifact.write_text("Reviewed content.\n", encoding="utf-8")
+        (self.task_dir / "review.md").write_text(
+            sha256_review(ACTIVE_TASK, "artifact.txt", sha256_of(artifact)), encoding="utf-8"
+        )
+        self.write_task(
+            render_task(
+                status="done",
+                context_refs=f"[{OTHER_TASK}/notes.md]",
+                review_current="true",
+                review_ref=f"{ACTIVE_TASK}/review.md",
+            )
+        )
+        self.set_focus(OTHER_ID)
+        self.assertEqual(self.archive(TASK_ID).returncode, 0)
+        review = self.project / ARCHIVED_TASK / "review.md"
+        review.write_text(
+            review.read_text(encoding="utf-8").replace('mode: "fresh_context"', 'mode: "fresh_context"\nmode: "fresh_context"'),
+            encoding="utf-8",
+        )
+        self.assertFailsWith(self.check("--full"), "duplicate key 'mode'")
+        return review
+
+    def test_d_a_malformed_archived_record_does_not_hide_its_tasks_references(self) -> None:
+        self.archived_task_with_a_malformed_review()
+        before = tree_snapshot(self.project)
+        result = self.archive(OTHER_ID)
+        self.assertEqual(result.returncode, 2, output(result))
+        self.assertIn(f"{ARCHIVED_TASK}/task.yaml:context_refs[0] -> {OTHER_TASK}/notes.md", output(result))
+        self.assertEqual(tree_snapshot(self.project), before)
+
+    def test_d_backstop_also_guards_an_already_failing_project(self) -> None:
+        tools = load_memory_tools()
+        self.archived_task_with_a_malformed_review()
+        before = tree_snapshot(self.project)
+        stderr = io.StringIO()
+        with patch.object(tools, "archived_references", return_value=[]), contextlib.redirect_stdout(
+            io.StringIO()
+        ), contextlib.redirect_stderr(stderr):
+            code = tools.archive_main([str(self.project), OTHER_ID])
+        self.assertEqual(code, 2, stderr.getvalue())
+        self.assertIn("would add errors to `check --full`", stderr.getvalue())
+        self.assertIn("context_refs[0]: referenced path does not exist", stderr.getvalue())
+        self.assertNotIn("duplicate key", stderr.getvalue(), "pre-existing errors are not reported as new")
+        self.assertEqual(tree_snapshot(self.project), before)
+
+    def test_references_of_an_archived_task_with_another_version_are_still_protected(self) -> None:
+        other = self.add_other_task()
+        (other / "notes.md").write_text("Durable context and decisions.\n", encoding="utf-8")
+        self.write_task(render_task(status="done", context_refs=f"[{OTHER_TASK}/notes.md]"))
+        self.set_focus(OTHER_ID)
+        self.assertEqual(self.archive(TASK_ID).returncode, 0)
+        archived = self.project / ARCHIVED_TASK / "task.yaml"
+        archived.write_text(archived.read_text(encoding="utf-8").replace("schema_version: 3", "schema_version: 2"), encoding="utf-8")
+        before = tree_snapshot(self.project)
+        result = self.archive(OTHER_ID)
+        self.assertEqual(result.returncode, 2, output(result))
+        self.assertIn(f"{ARCHIVED_TASK}/task.yaml:context_refs[0]", output(result))
+        self.assertEqual(tree_snapshot(self.project), before)
 
     def test_successful_archive_reports_that_check_still_passes(self) -> None:
         self.finished_task_with_records()

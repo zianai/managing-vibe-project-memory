@@ -380,12 +380,21 @@ def resolve_ref(project_root: Path, value: Any) -> Path | None:
     return v3_project_relative_path(project_root, value, "ref", [])
 
 
-def read_task(project_root: Path, directory: Path) -> TaskView:
+def read_task(project_root: Path, directory: Path, *, archived: bool = False) -> TaskView:
+    """Read a task and the claim records the checker validates.
+
+    An active task must be a readable protocol 3.0 record, since archive may rewrite it. An archived
+    task is only read: the checker still resolves its references when it declares another version
+    or one of its records is malformed, so such a record is skipped rather than the whole task.
+    """
     task_file = directory / "task.yaml"
-    task = load_protocol_record(project_root, task_file)
     label = task_file.relative_to(project_root).as_posix()
-    if str(task.get("id") or "").strip() != directory.name:
-        raise Refusal(f"{label}: id does not match its folder name")
+    if archived:
+        task = record_fields(task_file, task_file.read_bytes())
+    else:
+        task = load_protocol_record(project_root, task_file)
+        if str(task.get("id") or "").strip() != directory.name:
+            raise Refusal(f"{label}: id does not match its folder name")
     view = TaskView(directory, task_file, task, [], [])
     references = [("handoff_ref", task.get("handoff_ref")), ("review_ref", task.get("review_ref"))]
     references += [(f"action_refs[{index}]", value) for index, value in enumerate(as_list(task.get("action_refs")))]
@@ -404,6 +413,8 @@ def read_task(project_root: Path, directory: Path) -> TaskView:
             try:
                 view.claims.append((f"{label}:{name}", record_fields(path, path.read_bytes())))
             except (OSError, UnicodeDecodeError, ValueError) as exc:
+                if archived:
+                    continue  # the checker reports the malformed record; its siblings still count
                 raise Refusal(f"cannot read {path.relative_to(project_root)}: {exc}") from None
     return view
 
@@ -451,16 +462,18 @@ def claim_bindings(project_root: Path, view: TaskView) -> list[tuple[str, str, P
 
 
 def archived_views(project_root: Path, archive_root: Path) -> list[TaskView]:
-    """Archived tasks as the checker reads them; one it cannot read is skipped (the checker reports it)."""
+    """Archived tasks as the checker reads them; only a task.yaml it cannot parse at all is skipped,
+    because then the checker resolves none of its references either."""
     views: list[TaskView] = []
     if not archive_root.is_dir():
         return views
     for directory in sorted(archive_root.iterdir()):
-        if directory.is_symlink() or not directory.is_dir():
+        task_file = directory / "task.yaml"
+        if directory.is_symlink() or not directory.is_dir() or task_file.is_symlink() or not task_file.is_file():
             continue
         try:
-            views.append(read_task(project_root, directory))
-        except Refusal:
+            views.append(read_task(project_root, directory, archived=True))
+        except (OSError, UnicodeDecodeError, ValueError):
             continue
     return views
 
@@ -711,6 +724,17 @@ def save_originals(project_root: Path, rewrites: list[Rewrite]) -> tuple[Path | 
     return backup, None
 
 
+def introduced_errors(before: list[str], after: list[str], task_id: str) -> list[str]:
+    """check --full errors in after that before did not have.
+
+    An error that existed before counts as the same error when it now names the task under its new
+    path, so errors that only moved with the task are not reported as new.
+    """
+    old_path = re.compile(re.escape(f"work/active/{task_id}") + r"(?![A-Za-z0-9._-])")
+    known = set(before) | {old_path.sub(f"work/archive/{task_id}", error) for error in before}
+    return [error for error in after if error not in known]
+
+
 def apply_archive(plan: ArchivePlan, verify: Callable[[], list[str]] | None = None) -> None:
     """Move, then rewrite, then run verify; on failure, or if verify returns errors, restore and
     verify every byte, then move back."""
@@ -800,19 +824,20 @@ def archive_main(argv: list[str]) -> int:
     if args.dry_run:
         print("Dry run: nothing changed")
         return EXIT_OK
-    # Planning mirrors the checker's rules; the checker itself is the backstop. If check --full
-    # passes now, it must still pass once the archive is applied, or the archive is rolled back.
+    # Planning mirrors the checker's rules; the checker itself is the backstop. The applied archive
+    # must not add a check --full error, whether or not the check passes now, or it is rolled back.
     try:
         baseline = check_project_v3(project_root, "full", [])
     except GitUnavailable as exc:
         print(f"ERROR cannot run check --full before archiving: {exc}; nothing changed", file=sys.stderr)
         return EXIT_REFUSED
-    verify = None if baseline else (lambda: check_project_v3(project_root, "full", []))
     try:
-        apply_archive(plan, verify)
+        apply_archive(
+            plan, lambda: introduced_errors(baseline, check_project_v3(project_root, "full", []), args.task_id)
+        )
     except ArchiveWouldBreak as exc:
         print(
-            "ERROR archiving would make `check --full` fail, so it was rolled back and nothing changed:",
+            "ERROR archiving would add errors to `check --full`, so it was rolled back and nothing changed:",
             file=sys.stderr,
         )
         for error in exc.errors:
@@ -836,10 +861,9 @@ def archive_main(argv: list[str]) -> int:
         print(f"ERROR archive failed and was rolled back: {exc}", file=sys.stderr)
         return EXIT_REFUSED
     if baseline:
-        print(f"Archived {args.task_id}.")
         print(
-            f"WARNING check --full already failed before archiving ({len(baseline)} error(s)), so archive "
-            f"could not verify that the archive keeps it passing; run `project_memory.py check {project_root} --full`"
+            f"Archived {args.task_id}. check --full still fails with the {len(baseline)} error(s) it had before; "
+            "archive added none."
         )
     else:
         print(f"Archived {args.task_id}. check --full still passes.")
