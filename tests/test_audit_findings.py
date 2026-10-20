@@ -346,6 +346,81 @@ class ArchivePlanningTest(AuditArchiveCase):
 
 
 # ---------------------------------------------------------------------------
+# PR #13 review (review-pr-13.md), scenarios A-C: archive must not leave a passing
+# check --full failing, and its planning must read paths as the checker does
+# ---------------------------------------------------------------------------
+
+
+class ArchiveReviewScenarioTest(AuditArchiveCase):
+    def test_a_refuses_to_create_the_archive_folder_under_a_protection(self) -> None:
+        self.write_task(render_task(status="done"))
+        self.add_other_task(protected_paths="[work/archive/]")
+        self.assertPasses(self.check("--full"))
+        self.assertRefusedUnchanged(f"archive would create {ARCHIVED_TASK}")
+
+    def test_b_refuses_to_rewrite_a_file_an_archived_sha256_claim_binds(self) -> None:
+        self.write_task(render_task(status="done"))
+        other = self.add_other_task(review_ref=f"{OTHER_TASK}/review.md", review_current="true")
+        state = self.project / "project" / "state.yaml"
+        (other / "review.md").write_text(
+            sha256_review(OTHER_TASK, "project/state.yaml", sha256_of(state)), encoding="utf-8"
+        )
+        first = self.archive(OTHER_ID)
+        self.assertEqual(first.returncode, 0, output(first))
+        self.assertPasses(self.check("--full"))
+        self.assertRefusedUnchanged(f"work/archive/{OTHER_ID}/task.yaml:review_ref")
+        self.assertPasses(self.check("--full"))
+
+    def test_c_reads_a_dot_slash_archived_reference_as_the_checker_does(self) -> None:
+        other = self.add_other_task()
+        (other / "notes.md").write_text("Durable context and decisions.\n", encoding="utf-8")
+        self.write_task(render_task(status="done", context_refs=f"[./{OTHER_TASK}/notes.md]"))
+        self.set_focus(OTHER_ID)
+        first = self.archive(TASK_ID)
+        self.assertEqual(first.returncode, 0, output(first))
+        self.assertPasses(self.check("--full"))
+        before = tree_snapshot(self.project)
+        second = self.archive(OTHER_ID)
+        self.assertEqual(second.returncode, 2, output(second))
+        self.assertIn(f"context_refs[0] -> ./{OTHER_TASK}/notes.md", output(second))
+        self.assertEqual(tree_snapshot(self.project), before)
+
+    def test_check_backstop_rolls_back_what_planning_misses(self) -> None:
+        tools = load_memory_tools()
+        other = self.add_other_task()
+        (other / "notes.md").write_text("Durable context and decisions.\n", encoding="utf-8")
+        self.write_task(render_task(status="done", context_refs=f"[{OTHER_TASK}/notes.md]"))
+        self.set_focus(OTHER_ID)
+        self.assertEqual(self.archive(TASK_ID).returncode, 0)
+        before = tree_snapshot(self.project)
+        stderr = io.StringIO()
+        # Blind the planning check, as if it had a gap; the full-check backstop must still refuse.
+        with patch.object(tools, "archived_references", return_value=[]), contextlib.redirect_stdout(
+            io.StringIO()
+        ), contextlib.redirect_stderr(stderr):
+            code = tools.archive_main([str(self.project), OTHER_ID])
+        self.assertEqual(code, 2, stderr.getvalue())
+        self.assertIn("would make `check --full` fail, so it was rolled back", stderr.getvalue())
+        self.assertIn("referenced path does not exist", stderr.getvalue())
+        self.assertEqual(tree_snapshot(self.project), before)
+        self.assertFalse((self.project / f"work/archive/{OTHER_ID}").exists())
+
+    def test_archive_of_an_already_failing_project_warns_that_it_was_not_verified(self) -> None:
+        self.write_task(render_task(status="done"))
+        self.add_other_task(context_refs="[missing.md]")
+        self.assertFailsWith(self.check("--full"), "referenced path does not exist")
+        result = self.archive(TASK_ID)
+        self.assertEqual(result.returncode, 0, output(result))
+        self.assertIn("check --full already failed before archiving (1 error(s))", result.stdout)
+
+    def test_successful_archive_reports_that_check_still_passes(self) -> None:
+        self.finished_task_with_records()
+        result = self.archive(TASK_ID)
+        self.assertEqual(result.returncode, 0, output(result))
+        self.assertIn("check --full still passes", result.stdout)
+
+
+# ---------------------------------------------------------------------------
 # P2-04: rollback is verified and reported truthfully
 # ---------------------------------------------------------------------------
 

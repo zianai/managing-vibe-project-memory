@@ -316,7 +316,7 @@ python3 "<skill-dir>/scripts/project_memory.py" guide continuity-kernel
 
 `subject <project-root> {git|worktree|sha256} <path>...` 只读地打印可粘贴到交接、评审或操作记录 front matter 的主体行：已提交的路径用 `git`，未提交的改动用 `worktree`（摘要包含 `HEAD`，任何新提交都会使其过期），单个工件文件用 `sha256`。路径有未提交改动时 `git` 返回 `1` 并建议改用 `worktree`；越界、符号链接、缺失文件、被 Git 忽略的文件（其字节不进入摘要，请改用 `sha256`）、路径含 `#`（检查器会把它当作 fragment）或没有 Git 仓库时返回 `2`。像 `001`、`true`、`null` 这样会被 YAML 读成数字、布尔值或空值的文件名会自动加引号，输出总能被检查器原样读回。详见[字段参考](references/field-reference.md#subjects)。
 
-`archive <project-root> <task-id> [--dry-run]` 把 `work/active/<id>` 移到 `work/archive/<id>`，并只在协议记录中改写指向它的路径：`project/state.yaml`、每个活动任务的 `task.yaml`，以及这些任务引用的交接、评审和操作记录的 front matter；若 `active_task` 指向该任务，则改为 `null`。其他文件（工件、笔记、决策正文）保持原字节，绑定它们的摘要因此仍然有效；其中仍提到旧路径的文件会以 `WARNING` 列出。它从不暂存或提交。以下情况返回 `2` 且不做任何修改：任务不存在或目标已存在、符号链接、未提交改动、待改写文件未被 Git 跟踪（含被忽略的文件）、移动或改写会触及任一活动任务的 `protected_paths`、会使某个仍需校验的声明失效、会断开已归档记录的引用、或记录不是 schema 3 / protocol 3.0。每次改写都是原子替换；中途失败会回滚并逐字节核对，无法完整回滚时返回 `3`，列出残留路径并保留原始字节备份。之后运行 `check --full`，再用它打印的 `git add` 命令只暂存归档改动并提交。详见[归档](references/continuity-kernel.md#archiving)。
+`archive <project-root> <task-id> [--dry-run]` 把 `work/active/<id>` 移到 `work/archive/<id>`，并只在协议记录中改写指向它的路径：`project/state.yaml`、每个活动任务的 `task.yaml`，以及这些任务引用的交接、评审和操作记录的 front matter；若 `active_task` 指向该任务，则改为 `null`。其他文件（工件、笔记、决策正文）保持原字节，绑定它们的摘要因此仍然有效；其中仍提到旧路径的文件会以 `WARNING` 列出。它从不暂存或提交。以下情况返回 `2` 且不做任何修改：任务不存在或目标已存在、符号链接、未提交改动、待改写文件未被 Git 跟踪（含被忽略的文件）、移动（包括新建的 `work/archive/<id>`）或改写会触及任一活动任务的 `protected_paths`、会使某个仍需校验的声明失效（包括已归档任务的 `sha256:` 声明）、会断开已归档记录的引用（按检查器的路径规则判断，`./work/active/…` 也算）、或记录不是 schema 3 / protocol 3.0。若归档前 `check --full` 通过，归档后它必须仍然通过，否则自动回滚并返回 `2`，列出新出现的错误。每次改写都是原子替换；中途失败会回滚并逐字节核对，无法完整回滚时返回 `3`，列出残留路径并保留原始字节备份。之后运行 `check --full`，再用它打印的 `git add` 命令只暂存归档改动并提交。详见[归档](references/continuity-kernel.md#archiving)。
 
 模板名称：`agents`、`state`、`task`、`decisions`、`handoff`、`review`、`action`。规则名称见[协议索引](#protocol-reference)。模板保留待填写的占位符，不代表批准或执行成功；也可以直接打开[模板文件](references/continuity-kernel.md#record-templates)，不必运行命令。
 
@@ -525,7 +525,7 @@ git -C "<project-root>" commit -m "Archive T-001-initial"
 
 1. 先用 `--dry-run` 查看 `MOVE`、`REWRITE`、`STATE` 计划和 `WARNING`，此时不会改动任何文件；
 2. 再执行归档：任务目录移到 `work/archive/`，协议记录中指向它的路径被改写，若 `active_task` 指向该任务则改为 `null`；
-3. 运行 `check --full`，确认归档后的记录仍然一致；
+3. 归档前若 `check --full` 通过，命令会在归档后自动复查并输出 `check --full still passes`；若归档前已有错误，它会给出 `WARNING`，此时请自己运行 `check --full`；
 4. 只暂存归档本身的改动：直接运行 `archive` 最后打印的 `git add -A -- …` 命令，它只包含被移动的任务目录和 `REWRITE` 行列出的其他路径（上例假设只改写了 `project/state.yaml`）。不要整目录暂存 `work/` 或 `project/`，以免把他人未提交的改动一起提交；提交前用 `git diff --cached --name-only` 确认索引中没有其他路径。`archive` 从不暂存或提交；任务目录或待改写文件有未提交改动时，它会拒绝执行。
 
 ### 并行执行环境：Git 原生协作

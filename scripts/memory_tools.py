@@ -21,7 +21,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable
 
 from check_project_memory import (
     CONTINUITY_KERNEL_PROTOCOL,
@@ -29,6 +29,7 @@ from check_project_memory import (
     V3_TASK_NAME_RE,
     GitUnavailable,
     as_list,
+    check_project_v3,
     first_symlink_component,
     run_git,
     sha256,
@@ -257,6 +258,14 @@ class TaskView:
     claims: list[tuple[str, dict[str, Any]]]  # (label, front matter) of the claims the checker validates
 
 
+class ArchiveWouldBreak(Exception):
+    """The applied archive would make a passing check --full fail."""
+
+    def __init__(self, errors: list[str]):
+        super().__init__("; ".join(errors))
+        self.errors = errors
+
+
 class RollbackIncomplete(Exception):
     """A failed archive whose rollback could not restore everything."""
 
@@ -441,51 +450,41 @@ def claim_bindings(project_root: Path, view: TaskView) -> list[tuple[str, str, P
     return bindings
 
 
-def archived_references(project_root: Path, archive_root: Path, old_prefix: str) -> list[str]:
-    """References from archived records that the checker resolves and that point at old_prefix."""
-    found: list[str] = []
+def archived_views(project_root: Path, archive_root: Path) -> list[TaskView]:
+    """Archived tasks as the checker reads them; one it cannot read is skipped (the checker reports it)."""
+    views: list[TaskView] = []
     if not archive_root.is_dir():
-        return found
-
-    def scan(label: str, record: dict[str, Any]) -> None:
-        for key, value in record.items():
-            if key.startswith("x_"):
-                continue
-            if key.endswith("_ref"):
-                items = [(key, value)]
-            elif key.endswith("_refs"):
-                items = [(f"{key}[{index}]", item) for index, item in enumerate(as_list(value))]
-            else:
-                continue
-            for name, item in items:
-                target = str(item or "").strip().split("#", 1)[0]
-                if target == old_prefix or target.startswith(old_prefix + "/"):
-                    found.append(f"{label}:{name} -> {item}")
-
+        return views
     for directory in sorted(archive_root.iterdir()):
-        task_file = directory / "task.yaml"
-        if directory.is_symlink() or not directory.is_dir() or task_file.is_symlink() or not task_file.is_file():
+        if directory.is_symlink() or not directory.is_dir():
             continue
         try:
-            task = record_fields(task_file, task_file.read_bytes())
-        except (OSError, UnicodeDecodeError, ValueError):
-            continue  # the checker reports a malformed archived task on its own
-        label = task_file.relative_to(project_root).as_posix()
-        scan(label, task)
-        claims = []
-        if task.get("handoff_current") is True:
-            claims.append(task.get("handoff_ref"))
-        if v3_review_required(task):
-            claims.append(task.get("review_ref"))
-        claims.extend(as_list(task.get("action_refs")))
-        for value in claims:
-            path = resolve_ref(project_root, value)
-            if path is None:
-                continue
-            try:
-                scan(path.relative_to(project_root).as_posix(), record_fields(path, path.read_bytes()))
-            except (OSError, UnicodeDecodeError, ValueError):
-                continue
+            views.append(read_task(project_root, directory))
+        except Refusal:
+            continue
+    return views
+
+
+def archived_references(project_root: Path, views: list[TaskView], moved_folder: PurePosixPath) -> list[str]:
+    """References in archived records that the checker resolves and that point into moved_folder."""
+    found: list[str] = []
+    for view in views:
+        records = [(view.task_file.relative_to(project_root).as_posix(), view.task), *view.claims]
+        for label, record in records:
+            for key, value in record.items():
+                if key.startswith("x_"):
+                    continue
+                if key.endswith("_ref"):
+                    items = [(key, value)]
+                elif key.endswith("_refs"):
+                    items = [(f"{key}[{index}]", item) for index, item in enumerate(as_list(value))]
+                else:
+                    continue
+                for name, item in items:
+                    # Read the path as the checker does, so `./work/active/<id>/x` matches too.
+                    target = PurePosixPath(str(item or "").strip().split("#", 1)[0])
+                    if target == moved_folder or moved_folder in target.parents:
+                        found.append(f"{label}:{name} -> {item}")
     return found
 
 
@@ -579,16 +578,20 @@ def plan_archive(project_root: Path, task_id: str) -> ArchivePlan:
         rewrites[path] = Rewrite(path, final_path(path), original, updated)
     plan.rewrites = list(rewrites.values())
 
-    # The protected_paths of every active task, the archived one included, cover the move and the rewrites.
+    # The protected_paths of every active task, the archived one included, cover the move (both the folder
+    # it empties and the one it creates, as for the initializer's outputs) and the rewrites.
     moved_folder = PurePosixPath(relative(source))
+    created_folder = PurePosixPath(relative(destination))
     for view in views:
         for raw in as_list(view.task.get("protected_paths")):
             protected = str(raw or "").strip()
             if not protected:
                 continue
-            touched = [("move", moved_folder)] if (
-                protection_covers(protected, moved_folder) or PurePosixPath(protected).is_relative_to(moved_folder)
-            ) else []
+            touched = [
+                (action, folder)
+                for action, folder in (("move", moved_folder), ("create", created_folder))
+                if protection_covers(protected, folder) or PurePosixPath(protected).is_relative_to(folder)
+            ]
             touched += [
                 ("rewrite", PurePosixPath(relative(path))) for path in rewrites
                 if protection_covers(protected, PurePosixPath(relative(path)))
@@ -600,15 +603,21 @@ def plan_archive(project_root: Path, task_id: str) -> ArchivePlan:
                     f"(protected_paths: {protected}); remove that protection first if this is intended"
                 )
 
-    # Claims that would stop matching what they bind. The archived task's claims become
-    # history, where only sha256 subjects are still compared with the file.
-    for view in views:
-        historical = view.directory == source
+    # Claims that would stop matching what they bind. Claims of archived tasks, and of the task
+    # being archived, are history, where only sha256 subjects are still compared with the file.
+    archived = archived_views(project_root, archive_root)
+    for view in views + archived:
+        historical = view.directory == source or view.directory.is_relative_to(archive_root)
+        remedy = (
+            "archived history is never edited, so decide by hand how to keep or retire that claim"
+            if view.directory.is_relative_to(archive_root)
+            else "refresh or retire that claim first"
+        )
         for label, kind, path in claim_bindings(project_root, view):
             if path in rewrites and (kind == "bytes" or not historical):
                 raise Refusal(
                     f"archiving would invalidate {label}: its subject binds {relative(path)}, "
-                    "which archive would rewrite; refresh or retire that claim first"
+                    f"which archive would rewrite; {remedy}"
                 )
             if kind == "content" and not historical and path.is_relative_to(source):
                 raise Refusal(
@@ -616,7 +625,7 @@ def plan_archive(project_root: Path, task_id: str) -> ArchivePlan:
                     "which archive would move; refresh or retire that claim first"
                 )
 
-    broken = archived_references(project_root, archive_root, old_prefix)
+    broken = archived_references(project_root, archived, moved_folder)
     if broken:
         raise Refusal(
             "archived records reference files archive would move, and archived history is never edited: "
@@ -702,8 +711,9 @@ def save_originals(project_root: Path, rewrites: list[Rewrite]) -> tuple[Path | 
     return backup, None
 
 
-def apply_archive(plan: ArchivePlan) -> None:
-    """Move, then rewrite; on failure restore and verify every byte, then move back."""
+def apply_archive(plan: ArchivePlan, verify: Callable[[], list[str]] | None = None) -> None:
+    """Move, then rewrite, then run verify; on failure, or if verify returns errors, restore and
+    verify every byte, then move back."""
     archive_root = plan.destination.parent
     created_archive_root = False
     moved = False
@@ -717,6 +727,10 @@ def apply_archive(plan: ArchivePlan) -> None:
         for rewrite in plan.rewrites:
             written.append(rewrite)
             overwrite(rewrite.final, rewrite.updated)
+        if verify is not None:
+            errors = verify()
+            if errors:
+                raise ArchiveWouldBreak(errors)
     except BaseException as exc:
         unrestored: list[Rewrite] = []
         for rewrite in reversed(written):
@@ -786,8 +800,24 @@ def archive_main(argv: list[str]) -> int:
     if args.dry_run:
         print("Dry run: nothing changed")
         return EXIT_OK
+    # Planning mirrors the checker's rules; the checker itself is the backstop. If check --full
+    # passes now, it must still pass once the archive is applied, or the archive is rolled back.
     try:
-        apply_archive(plan)
+        baseline = check_project_v3(project_root, "full", [])
+    except GitUnavailable as exc:
+        print(f"ERROR cannot run check --full before archiving: {exc}; nothing changed", file=sys.stderr)
+        return EXIT_REFUSED
+    verify = None if baseline else (lambda: check_project_v3(project_root, "full", []))
+    try:
+        apply_archive(plan, verify)
+    except ArchiveWouldBreak as exc:
+        print(
+            "ERROR archiving would make `check --full` fail, so it was rolled back and nothing changed:",
+            file=sys.stderr,
+        )
+        for error in exc.errors:
+            print(f"ERROR {error}", file=sys.stderr)
+        return EXIT_REFUSED
     except RollbackIncomplete as exc:
         print(f"ERROR archive failed ({exc.cause}) and could not roll back completely:", file=sys.stderr)
         for problem in exc.problems:
@@ -805,7 +835,14 @@ def archive_main(argv: list[str]) -> int:
     except OSError as exc:
         print(f"ERROR archive failed and was rolled back: {exc}", file=sys.stderr)
         return EXIT_REFUSED
-    print(f"Archived {args.task_id}. Next: run `project_memory.py check {project_root} --full`.")
+    if baseline:
+        print(f"Archived {args.task_id}.")
+        print(
+            f"WARNING check --full already failed before archiving ({len(baseline)} error(s)), so archive "
+            f"could not verify that the archive keeps it passing; run `project_memory.py check {project_root} --full`"
+        )
+    else:
+        print(f"Archived {args.task_id}. check --full still passes.")
     if plan.in_git:
         staged = [relative(plan.source), relative(plan.destination)]
         staged += [relative(rewrite.final) for rewrite in plan.rewrites if not rewrite.final.is_relative_to(plan.destination)]

@@ -158,14 +158,15 @@ python3 <skill-dir>/scripts/project_memory.py archive <project-root> <task-id>
   - the task id is invalid or missing, or `work/archive/<id>` exists;
   - a path it would move or rewrite contains a symlink;
   - `project/state.yaml` or an active `task.yaml` is missing, unreadable, or not schema 3 / protocol 3.0;
-  - the move or a rewrite touches a path that any active task, the archived one included, lists in `protected_paths`;
-  - the change would invalidate a claim the checker still validates: a `sha256:` subject whose file would be rewritten, or another active task's `git:`/`worktree:` subject whose paths would be moved or rewritten;
-  - an archived record references a file inside the task being moved (archived history is never edited, so the reference would break);
+  - the move (the folder it empties or the `work/archive/<id>` it creates) or a rewrite touches a path that any active task, the archived one included, lists in `protected_paths`;
+  - the change would invalidate a claim the checker still validates: a `sha256:` subject of any task, active or archived, whose file would be rewritten, or another active task's `git:`/`worktree:` subject whose paths would be moved or rewritten;
+  - an archived record references a file inside the task being moved, in any spelling the checker accepts, such as `./work/active/<id>/…` (archived history is never edited, so the reference would break);
   - in a Git repository, the task folder has uncommitted or untracked changes, or a file it would rewrite is untracked, ignored, or modified. Commit those first.
+- If `check --full` passes before the archive, it must still pass after it: archive applies the plan, runs the full check, and rolls everything back (exit `2`, listing the new errors) if the archive made it fail. If the project already failed the check, a `WARNING` says the result could not be verified.
 - Each rewrite replaces the file atomically. If a step fails, it restores every byte, verifies the result, and moves the folder back; if the rollback cannot be completed it exits `3`, lists each residue, and saves the original bytes to a backup folder.
 - It never stages or commits. After a successful run it prints a `git add -A -- …` command that names only the moved folder and the other rewritten files.
 
-Afterwards run `check --full`, stage with the printed command (not whole folders, which can sweep in someone else's uncommitted work), and commit. The archived task's claims are then checked as history (see above).
+Afterwards stage with the printed command (not whole folders, which can sweep in someone else's uncommitted work), and commit. The archived task's claims are then checked as history (see above).
 
 ## Record Templates
 
