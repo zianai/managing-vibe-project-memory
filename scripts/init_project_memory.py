@@ -11,6 +11,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from check_project_memory import v3_core_placeholder
 from flat_yaml import load_flat_yaml, unquoted_integer_hint
 
 
@@ -19,10 +20,6 @@ TEMPLATE_ROOT = SKILL_ROOT / "assets" / "project-template"
 DEFAULT_TASK_ID = "T-001-initial"
 TASK_ID_RE = re.compile(
     r"^T-(?:[A-Z][A-Z0-9]{1,11}-\d{3}|\d{3})-[a-z0-9]+(?:-[a-z0-9]+)*$"
-)
-PLACEHOLDER_RE = re.compile(
-    r"\{\{[^}]+\}\}|\b(?:TODO|TBD|FIXME)\b|\bREPLACE[_ -]?(?:ME|THIS|THE|WITH)\b",
-    re.IGNORECASE,
 )
 
 
@@ -81,12 +78,8 @@ def incompatible_existing_authority(
             reason_values = reasons if isinstance(reasons, list) else [reasons]
             if not any(str(item or "").strip() for item in reason_values):
                 return f"existing task risk_reasons is empty: {path.relative_to(project_root)}"
-            core_text = "\n".join(
-                str(record.get(key) or "")
-                for key in required
-                if not key.startswith("x_")
-            )
-            if PLACEHOLDER_RE.search(core_text) and (
+            # The checker's rule, so a task init accepts is one the checker accepts.
+            if v3_core_placeholder(record) and (
                 status != "proposed"
                 or record.get("implementation_started") is True
                 or record.get("completion_claim") is True
@@ -347,10 +340,11 @@ def initialize(
             )
             return 2
 
+    # Only outputs that will be created can violate a protection; existing ones are skipped.
     incompatibility = incompatible_existing_authority(
         project_root,
         task_id,
-        tuple(targets),
+        tuple(relative for relative in targets if not (project_root / relative).exists()),
     )
     if incompatibility:
         print(f"ERROR {incompatibility}", file=sys.stderr)

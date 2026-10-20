@@ -516,16 +516,23 @@ def validate_adaptive_html_surface(
         errors.append(f"{label}: local HTML surface lacks substantive visible content")
 
 
+class GitUnavailable(RuntimeError):
+    """The git executable cannot be run, so git-backed claims cannot be checked."""
+
+
 def run_git(project_root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
     # GIT_OPTIONAL_LOCKS=0 keeps read-only commands such as `git status` from
     # refreshing (rewriting) the index.
-    return subprocess.run(
-        ["git", "-C", str(project_root), *args],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
-    )
+    try:
+        return subprocess.run(
+            ["git", "-C", str(project_root), *args],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+        )
+    except OSError as exc:
+        raise GitUnavailable(f"git cannot be run: {exc}") from None
 
 
 V3_REQUIRED_STATE_KEYS = (
@@ -720,6 +727,22 @@ def v3_git_status(project_root: Path, *pathspecs: str) -> bytes | None:
     return result.stdout if result.returncode == 0 else None
 
 
+def v3_git_ignored(project_root: Path, subject_paths: list[str]) -> list[str] | None:
+    """Untracked, git-ignored files under subject_paths.
+
+    git status, diff, and the untracked listing all skip them, so a worktree
+    digest would not change when their bytes change.
+    """
+    result = run_git(
+        project_root, "ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", *subject_paths
+    )
+    if result.returncode != 0:
+        return None
+    return sorted(
+        name.decode("utf-8", errors="surrogateescape") for name in result.stdout.split(b"\0") if name
+    )
+
+
 # Domain separator hashed first into every worktree:/patch: digest. Changing it
 # (or the digest algorithm below) invalidates every existing worktree subject.
 WORKTREE_DIGEST_DOMAIN = b"goalos-continuity-worktree-v1\0"
@@ -775,7 +798,7 @@ def v3_validate_subject(
     errors: list[str],
     *,
     artifact: Path | None = None,
-    subject_paths: list[str] | None = None,
+    subject_paths: list[Any] | None = None,
     historical: bool = False,
 ) -> None:
     """Validate a claim subject.
@@ -788,7 +811,13 @@ def v3_validate_subject(
     if not value:
         errors.append(f"{label}: exact subject is required")
         return
-    paths = [str(path).strip() for path in (subject_paths or []) if str(path).strip()]
+    for index, path in enumerate(subject_paths or []):
+        if not isinstance(path, str):
+            # `[001]`, `[true]` or `[null]` parse as a number, boolean or null, not the file name.
+            errors.append(
+                f"{label}:subject_paths[{index}]: {path!r} is not a path string; quote it, for example [\"001\"]"
+            )
+    paths = [path.strip() for path in (subject_paths or []) if isinstance(path, str) and path.strip()]
     path_targets: list[tuple[str, Path]] = []
     for index, path in enumerate(paths):
         target = v3_project_relative_path(
@@ -803,12 +832,19 @@ def v3_validate_subject(
             path_targets.append((path, target))
     if value.startswith("git:") or GIT_COMMIT_RE.fullmatch(value):
         expected = value.removeprefix("git:")
-        exists = run_git(project_root, "cat-file", "-e", f"{expected}^{{commit}}")
         if not paths:
             errors.append(f"{label}: git subject requires explicit subject_paths")
             return
+        if not GIT_COMMIT_RE.fullmatch(expected):
+            # A branch, tag, or short SHA moves with new commits, so an old claim would keep passing.
+            errors.append(
+                f"{label}: git subject must be a full 40- or 64-character commit SHA, "
+                "not a branch, tag, or abbreviated SHA"
+            )
+            return
+        exists = run_git(project_root, "cat-file", "-e", f"{expected}^{{commit}}")
         if historical:
-            if not GIT_COMMIT_RE.fullmatch(expected) or exists.returncode != 0:
+            if exists.returncode != 0:
                 errors.append(f"{label}: archived git subject does not name an existing commit")
             return
         for path, target in path_targets:
@@ -846,6 +882,13 @@ def v3_validate_subject(
                 errors.append(f"{label}: subject path must be a regular file: {path}")
             if not current_is_file and not head_is_file:
                 errors.append(f"{label}: subject path never identifies a regular file in the worktree or HEAD: {path}")
+        ignored = v3_git_ignored(project_root, paths) if paths else []
+        if ignored:
+            errors.append(
+                f"{label}: worktree subject cannot bind git-ignored files, whose bytes are not in the digest: "
+                f"{', '.join(ignored)}; use a sha256 subject for a single file"
+            )
+            return
         actual = v3_worktree_digest(project_root, paths)
         if not SHA256_RE.fullmatch(expected) or actual != expected:
             errors.append(
@@ -1134,7 +1177,7 @@ def v3_validate_action_record(
             f"{label}:subject",
             errors,
             artifact=subject_ref,
-            subject_paths=[str(value) for value in as_list(record.get("subject_paths"))],
+            subject_paths=as_list(record.get("subject_paths")),
             historical=historical,
         )
     authority_ref = None
@@ -1201,6 +1244,42 @@ def v3_validate_action_record(
             v3_project_relative_path(project_root, value, f"{label}:{field}[{index}]", errors)
 
 
+def v3_core_placeholder(record: dict[str, Any]) -> bool:
+    """True if a core field holds a template placeholder.
+
+    Comments and top-level x_* extensions are not core content, so they are not scanned.
+    """
+    text = "\n".join(f"{key}: {value}" for key, value in record.items() if not key.startswith("x_"))
+    return any(pattern.search(text) for pattern in PLACEHOLDER_PATTERNS)
+
+
+def v3_task_claims_completion(task: dict[str, Any]) -> bool:
+    status = str(task.get("status") or "").strip()
+    return status.lower() in {"done", "completed"} or task.get("completion_claim") is True
+
+
+def v3_task_is_high_impact(task: dict[str, Any]) -> bool:
+    """A declared high-impact risk reason, effect, external effect, or action record."""
+    risk_reasons = [str(item).strip() for item in as_list(task.get("risk_reasons"))]
+    if set(risk_reasons) & V3_HIGH_RISK_REASONS or any(reason.startswith("custom-high:") for reason in risk_reasons):
+        return True
+    for field, high_values in V3_HIGH_IMPACT_EFFECTS.items():
+        if str(task.get(field) or "").strip().lower() in high_values:
+            return True
+    external_effects = str(task.get("external_effects") or "").strip().lower()
+    return bool(external_effects and external_effects != "none") or bool(as_list(task.get("action_refs")))
+
+
+def v3_review_required(task: dict[str, Any]) -> bool:
+    """Whether the task activates a formal review claim, so its review record is validated."""
+    conformance = str(task.get("conformance_status") or "not_required")
+    return (
+        task.get("review_current") is True
+        or (v3_task_claims_completion(task) and v3_task_is_high_impact(task))
+        or conformance in {"matched", "differences_accepted"}
+    )
+
+
 def v3_validate_task(
     project_root: Path,
     task_dir: Path,
@@ -1255,7 +1334,7 @@ def v3_validate_task(
     status = str(task.get("status") or "").strip()
     if not status:
         errors.append(f"{relative}/task.yaml: status must not be empty")
-    completion_claim = status.lower() in {"done", "completed"} or task.get("completion_claim") is True
+    completion_claim = v3_task_claims_completion(task)
     if "result_status" in task:
         errors.append(
             f"{relative}/task.yaml: result_status is ambiguous in protocol 3.0; use completion_claim: true"
@@ -1264,11 +1343,7 @@ def v3_validate_task(
         errors.append(
             f"{relative}/task.yaml: {field} duplicates review-owned formal metadata; keep it only in review front matter"
         )
-    try:
-        task_text = task_file.read_text(encoding="utf-8")
-    except OSError:
-        task_text = ""
-    if any(pattern.search(task_text) for pattern in PLACEHOLDER_PATTERNS) and (
+    if v3_core_placeholder(task) and (
         status != "proposed" or task.get("implementation_started") is True or completion_claim
     ):
         errors.append(
@@ -1299,17 +1374,8 @@ def v3_validate_task(
             floors.append(floor)
     if floors and risk in RISK_LEVEL_RANK and RISK_LEVEL_RANK[risk] < RISK_LEVEL_RANK[highest_risk(floors)]:
         errors.append(f"{relative}/task.yaml: risk is below the declared risk-reason floor")
-    high_impact = bool(set(risk_reasons) & V3_HIGH_RISK_REASONS) or any(
-        reason.startswith("custom-high:") for reason in risk_reasons
-    )
-    for field, high_values in V3_HIGH_IMPACT_EFFECTS.items():
-        if str(task.get(field) or "").strip().lower() in high_values:
-            high_impact = True
+    high_impact = v3_task_is_high_impact(task)
     external_effects = str(task.get("external_effects") or "").strip().lower()
-    if external_effects and external_effects != "none":
-        high_impact = True
-    if as_list(task.get("action_refs")):
-        high_impact = True
     if risk != "high":
         prose_risk_signals = dict.fromkeys(
             goal_high_risk_signals(task.get("goal")) + goal_high_risk_signals(task.get("scope"))
@@ -1434,7 +1500,7 @@ def v3_validate_task(
                     project_root, handoff_record.get("subject"),
                     f"{relative}/task.yaml:handoff_ref:subject", errors,
                     artifact=handoff_subject_ref,
-                    subject_paths=[str(value) for value in as_list(handoff_record.get("subject_paths"))],
+                    subject_paths=as_list(handoff_record.get("subject_paths")),
                     historical=historical,
                 )
                 for field, value in handoff_record.items():
@@ -1451,12 +1517,7 @@ def v3_validate_task(
                             )
     review_path = optional_paths.get("review_ref")
     conformance = str(task.get("conformance_status") or "not_required")
-    conformance_claim = conformance in {"matched", "differences_accepted"}
-    review_required = (
-        task.get("review_current") is True
-        or (completion_claim and high_impact)
-        or conformance_claim
-    )
+    review_required = v3_review_required(task)
     review_record: dict[str, Any] | None = None
     if review_required and review_path is None:
         errors.append(f"{relative}/task.yaml: activated formal review claim requires review_ref")
@@ -1485,7 +1546,7 @@ def v3_validate_task(
                     project_root, review_record.get("subject"),
                     f"{relative}/task.yaml:review_ref:subject", errors,
                     artifact=review_subject_ref,
-                    subject_paths=[str(value) for value in as_list(review_record.get("subject_paths"))],
+                    subject_paths=as_list(review_record.get("subject_paths")),
                     historical=historical,
                 )
                 if completion_claim and high_impact:
@@ -1779,7 +1840,7 @@ def v3_validate_task(
         else:
             v3_validate_decision_file(merge_ref, f"{relative}/task.yaml:merge_resolution_ref", errors)
         merge_subject = str(task.get("merge_resolution_subject") or "").strip().lower()
-        merge_paths = [str(value) for value in as_list(task.get("merge_resolution_subject_paths"))]
+        merge_paths = as_list(task.get("merge_resolution_subject_paths"))
         if not (merge_subject.startswith("git:") or merge_subject.startswith("worktree:") or merge_subject.startswith("patch:")):
             errors.append(
                 f"{relative}/task.yaml: resolved integration subject must bind a git commit or scoped worktree digest"
@@ -1807,9 +1868,21 @@ def v3_validate_task(
                 f"{relative}/task.yaml: high-impact completion requires action_refs or explicit external_effects: none"
             )
         if action_records:
-            if not action_groups or not all(action_group_terminal.values()):
+            # A record without a key belongs to no group, but it is still an unfinished action:
+            # every execution status requires a key, so it can only be planned.
+            unfinished = [
+                f"{action_path.relative_to(project_root).as_posix()} "
+                f"({str(record.get('status') or '').strip() or 'no status'}, no idempotency_key)"
+                for action_path, record in action_records
+                if not str(record.get("idempotency_key") or "").strip()
+            ]
+            unfinished += [
+                f"idempotency key '{key}'" for key, terminal in sorted(action_group_terminal.items()) if not terminal
+            ]
+            if unfinished:
                 errors.append(
-                    f"{relative}/task.yaml: completion cannot claim unfinished or ambiguous external actions"
+                    f"{relative}/task.yaml: completion cannot claim unfinished or ambiguous external actions: "
+                    + ", ".join(unfinished)
                 )
         acceptance_required = (
             risk == "high"
@@ -1829,6 +1902,21 @@ def v3_validate_task(
                 errors,
             )
     return task_id or None
+
+
+def v3_recovery_focus(project_root: Path, focus_id: str, errors: list[str]) -> Path | None:
+    """Return work/active/<focus_id> if it is a usable recovery focus; otherwise record why not."""
+    focus_dir = project_root / "work" / "active" / focus_id
+    focus_symlink = first_symlink_component(project_root, focus_dir)
+    if focus_symlink is not None:
+        errors.append(
+            f"work/active/{focus_id}: recovery-focus authority traverses symlink component {focus_symlink}"
+        )
+        return None
+    if not focus_dir.is_dir():
+        errors.append(f"project/state.yaml: active_task recovery focus '{focus_id}' does not exist in work/active")
+        return None
+    return focus_dir
 
 
 def check_project_v3(
@@ -1905,6 +1993,9 @@ def check_project_v3(
             f"work/active: task authority root traverses symlink component {active_root_symlink}"
         )
     elif mode == "full":
+        # A passing full check must also leave a recoverable default focus.
+        if focus_id:
+            v3_recovery_focus(project_root, focus_id, errors)
         task_locations: dict[str, tuple[Path, str]] = {}
         for location in ("active", "archive"):
             root = work_root / location
@@ -1930,15 +2021,8 @@ def check_project_v3(
                 task_locations[path.name] = (path, location)
         selected = list(task_locations.items())
     elif focus_id:
-        focus_dir = work_root / "active" / focus_id
-        focus_symlink = first_symlink_component(project_root, focus_dir)
-        if focus_symlink is not None:
-            errors.append(
-                f"work/active/{focus_id}: recovery-focus authority traverses symlink component {focus_symlink}"
-            )
-        elif not focus_dir.is_dir():
-            errors.append(f"project/state.yaml: active_task recovery focus '{focus_id}' does not exist in work/active")
-        else:
+        focus_dir = v3_recovery_focus(project_root, focus_id, errors)
+        if focus_dir is not None:
             selected = [(focus_id, (focus_dir, "active"))]
 
     for _, (task_dir, location) in selected:
@@ -1967,7 +2051,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     mode = "full" if args.full else "focus"
     warnings: list[str] = []
-    errors = check_project_v3(project_root, mode, warnings)
+    try:
+        errors = check_project_v3(project_root, mode, warnings)
+    except GitUnavailable as exc:
+        print(f"ERROR this project has git:/worktree: claims, which need git: {exc}")
+        return 2
     if errors:
         print(f"Project memory check failed with {len(errors)} error(s):")
         for error in errors:

@@ -63,7 +63,9 @@ exact `subject` lines a handoff, review, or action record needs.
 
 Archive a finished or abandoned task with `project_memory.py archive
 <project-root> <task-id>` (try `--dry-run` first), never a hand move; then run
-`--full` and commit.
+`--full`, stage only the paths its printed `git add` command names, and commit.
+It refuses, without writing, a move or rewrite that would touch
+`protected_paths` or invalidate a claim.
 
 Use default/`--focus` checks during work and `--full` for all current-protocol
 tasks, including archives, before completion or audit. `ERROR` lines fail the
